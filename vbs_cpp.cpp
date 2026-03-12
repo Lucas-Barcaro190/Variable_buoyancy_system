@@ -1,3 +1,13 @@
+// TODO:
+// 1) Create a function that calibrates the pulses counter at startup.
+// 2) Adapt the expand and contract command to better fit the 10 Hz frequency.
+// 3) Implement a protect system that ensures the driver returned the finished message before processing the next user command.
+//    - Maybe use semaphore is the easiest way to do this.
+//    - Make sure that the the user receives a message when it tries to send a command while the driver is still running.
+//        - Maybe print a message when the driver finishes too so the user can implement a function that only sends a new command
+//          when it can be sure that the movement stopped.
+// 4) ...
+
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -27,9 +37,6 @@
 #define PIN_ENABLE_DRIVER 16  // High = Driver OFF, Low = Driver ON
 #define SW_MIN_LIMIT 6        // Contracted switch for minimum limit
 #define SW_MAX_LIMIT 7        // Expanded switch for maximum limit
-#define POT_ADC_PIN 26        // GPIO26 (ADC0)
-#define POT_ADC_CHANNEL 0     // ADC Channel 0
-#define POT_SAMPLE_COUNT 64
 
 
 // Global secure state variables for fault handling
@@ -37,13 +44,13 @@ volatile bool sys_fault = false;
 volatile uint8_t sys_error = 0;
 volatile bool sys_back = false;
 
-// Potentiometer global variable
-volatile uint16_t potentiometer_value = 0;
-
 // Depth sensor global variables
 volatile float depth_sensor_value = 0;  // Current depth reading in meters
 volatile float pressure_offset = 0.0f;  // Pressure offset for depth calibration (set via 'set_pressure' command)
 volatile bool depth_sensor_initialized = false;  // Track if depth sensor is initialized
+
+// Internal pulses counter
+volatile uint32_t pulses_counter = 34410; // start in the middle (first test only).
 
 MS5837 depthSensor; // Create an instance of the MS5837 class to be used for reading depth sensor data
 
@@ -269,11 +276,11 @@ void processCommand(const char* line) {
     // and the last command is still running while the user is sending the next command.
 
     if (strcmp(cmd_name, "expand") == 0) {
-        handleMoveCommand("99 2"); // Shortcut command to expand with predefined parameters (can be adjusted, 99 is adjusted to 10 Hz)
+        handleMoveCommand("50 2"); // Shortcut command to expand with predefined parameters (can be adjusted, 99 is adjusted to 10 Hz)
         return;
     }
     if (strcmp(cmd_name, "contract") == 0) {
-        handleMoveCommand("-99 2"); // Shortcut command to contract with predefined parameters (can be adjusted, -99 is adjusted to 10 Hz)
+        handleMoveCommand("-50 2"); // Shortcut command to contract with predefined parameters (can be adjusted, -99 is adjusted to 10 Hz)
         return;
     }
     if (strcmp(cmd_name, "depth_sensor") == 0) {
@@ -387,72 +394,6 @@ void vDepthSensorTask(void *pvParameters) {
     }
 }
 
-// Potentiometer task: only in Portugal's VBS for monitoring purposes (not used for control in this project)
-// void vPotentiometerTask(void *pvParameters) {
-//     /*
-//     params:
-//     - samples: Array to hold raw ADC samples from the potentiometer for statistical analysis.
-//     behavior:
-//     - Continuously collects a defined number of samples from the ADC connected to the potentiometer.
-//     - period: 10 Hz (100ms delay between each batch of samples)
-//     */
-//     uint16_t samples[POT_SAMPLE_COUNT];
-    
-//     //static bool header_printed = false;
-    
-//     // Print CSV header once
-//     //if (!header_printed) {
-//         //printf("Mean,StdDev,CV,Min,Max,Range\n");
-//     //    header_printed = true;
-//     //}
-    
-//     while (true) {
-//         // Collect samples
-//         for(uint8_t i = 0; i < POT_SAMPLE_COUNT; i++) {
-//             samples[i] = adc_read();
-//             samples[i] >>= 3; // Convert 12-bit to 9-bit (0-4095 to 0-511)
-//         }
-        
-//         // Calculate statistics
-//         uint32_t sum = 0;
-//         //uint16_t min_val = samples[0];
-//         //uint16_t max_val = samples[0];
-        
-//         for(uint8_t i = 0; i < POT_SAMPLE_COUNT; i++) {
-//             sum += samples[i];
-//         //    if(samples[i] < min_val) min_val = samples[i];
-//         //    if(samples[i] > max_val) max_val = samples[i];
-//         }
-        
-//         // Mean
-//         uint32_t mean = (uint32_t)(sum / POT_SAMPLE_COUNT);
-//         potentiometer_value = mean;
-        
-//         // Standard deviation
-//         //uint32_t variance_sum = 0;
-//         //for(uint8_t i = 0; i < POT_SAMPLE_COUNT; i++) {
-//         //    int16_t diff = samples[i] - mean;
-//         //    variance_sum += (diff * diff);
-//         //}
-//         //uint16_t variance = (uint16_t)(variance_sum / POT_SAMPLE_COUNT);
-//         //float std_dev = sqrtf((float)variance);
-        
-//         // Range
-//         //uint16_t range = max_val - min_val;
-        
-//         // Coefficient of Variation (normalized noise)
-//         //float cv = (mean > 0) ? (std_dev / mean) * 100.0f : 0.0f;
-        
-//         // Print as CSV
-//         //printf("%d,%.2f,%.2f,%d,%d,%d\n", mean, std_dev, cv, min_val, max_val, range);
-        
-//         printf("POTENTIOMETER: %d\n", mean);
-//         // Delay for 10ms
-//         vTaskDelay(pdMS_TO_TICKS(100));
-//     }
-//}
-
-
 void vReceiverTask(void *pvParameters) {
     /*
     params:
@@ -487,7 +428,6 @@ void vParserTask(void *pvParameters) {
         - Continuously reads characters from the console input.
         - Handles backspace for editing input.
         - When Enter is pressed, processes the command in inputBuffer and resets it for the next command.
-        - Prints a prompt ("> ") after processing each command or when waiting for input.
         - Uses vTaskDelay to yield to other tasks while waiting for user input.
     */
     char inputBuffer[128];
@@ -536,13 +476,8 @@ extern "C" void prvSetupHardware(void) {
     gpio_set_dir(SW_MAX_LIMIT, GPIO_IN);
     gpio_pull_up(SW_MAX_LIMIT);
 
-    // Initialize ADC for potentiometer reading
-    // adc_init();
-    // adc_gpio_init(POT_ADC_PIN);
-    // adc_select_input(POT_ADC_CHANNEL);
-    
-    // Initialize I2C at 400kHz
-    i2c_init(i2c0, 400 * 1000);
+    // Initialize I2C at 100kHz
+    i2c_init(i2c0, 100 * 1000);
     gpio_set_function(8, GPIO_FUNC_I2C); // SDA
     gpio_set_function(9, GPIO_FUNC_I2C); // SCL
     gpio_pull_up(8);
@@ -577,22 +512,18 @@ int main() {
     // Hardware setup
     prvSetupHardware();
 
-    //xTaskCreate(vPotentiometerTask, "Potentiometer", 256, NULL, 2, NULL);
-
     // Create tasks for command parsing and UART reception
-    xTaskCreate(vParserTask, "Parser", 2048, NULL, 4, NULL); // Higher priority for command parsing to ensure responsive control
+    xTaskCreate(vParserTask, "Parser", 2048, NULL, 4, NULL); // Higher priority for command parsing from the user
     xTaskCreate(vReceiverTask, "Receiver", 2048, NULL, 5, NULL); // Higher priority for receiver to ensure we process incoming messages 
-                                                                 //from the driver promptly
+                                                                 // from the driver promptly
 
-    //xTaskCreate(vDepthSensorTask, "Depth", 2048, NULL, 3, NULL); // lower priority than communication with driver and user. Reads and updates depth with offset calibration
+    xTaskCreate(vDepthSensorTask, "Depth", 2048, NULL, 3, NULL); // lower priority than communication with driver and user. Reads and updates depth with offset calibration
     
-    // Potentiometer task
-    // xTaskCreate(vPotentiometerTask, "Potentiometer", 2048, NULL, 3, NULL);
-
     // Remember: while the raspberry receives messages from the computer, the driver can still be running, since it only stops
-    // the last command if a stop command is sent, if it hits a limit switch or it ends the last command.
-    // So the movement can still occur while the user is sending a command to raspberry.
-    // NOTE: The driver does stop the last command if it receives a new command, but it doesnt say when it stopped
+    //           the last command if a stop command is sent, if it hits a limit switch or it ends the last command.
+    //           So the movement can still occur while the user is sending a command to raspberry.
+    //
+    // NOTE: The driver does stop the last command if it receives a new command, but it doesnt say when it stopped (how many steps it did)
     // it is up to the user to keep in mind this and not send two commands in a row without waiting for the first one to end, otherwise 
     // it can cause unexpected behavior 
     
