@@ -222,7 +222,7 @@ void read_depth_sensor() {
      - sends via serial the last read value from the depth sensor, which is updated in the background by another task that continuously reads the sensor (to be implemented).
      - This allows the user to get real-time depth information on demand without blocking the main command
     */
-    printf("CURRENT_DEPTH: %.3f meters\n", depth_sensor_value);
+    printf("CURRENT_DEPTH: %.3f millimeters\n", depth_sensor_value);
 }
 
 // --- STRING PROCESS ---
