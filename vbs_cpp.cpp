@@ -88,14 +88,8 @@ extern "C" {
          - It reads all available bytes from the UART RX buffer and sends them to the xUartQueue for processing by the receiver task.
          - It uses portYIELD_FROM_ISR to yield to a higher priority task if one was woken by sending to the queue, ensuring prompt 
            processing of incoming messages from the driver.
-         - This allows the system to react quickly to messages from the driver, such as acknowledgments or status updates, without
-           blocking the main command parsing and user interface tasks.
-         - The while loop ensures that all bytes in the UART RX buffer are read and processed in one interrupt, preventing overflow
-           and ensuring timely handling of incoming data.
          - The use of BaseType_t and pdFALSE is standard practice in FreeRTOS ISR handlers for managing task wakeup and yielding 
            correctly.
-         - This design allows for efficient and responsive communication between the Raspberry Pi Pico and the motor driver, which
-           is critical for real-time control applications like this VBS project.
         */
         while (uart_is_readable(DRIVER_UART)) {
             uint8_t ch = uart_getc(DRIVER_UART);
@@ -147,7 +141,8 @@ void handleMoveCommand(char* args) {
     char* next_ptr;
     long pulses = strtol(args, &next_ptr, 10);
     int speed_raw = (int)strtol(next_ptr, NULL, 10);
-
+    
+    // Fault handling for limit switches
     if(sys_fault){
         switch (sys_error) {
         
@@ -276,15 +271,14 @@ void processCommand(const char* line) {
     // and the last command is still running while the user is sending the next command.
 
     if (strcmp(cmd_name, "expand") == 0) {
-        handleMoveCommand("50 2"); // Shortcut command to expand with predefined parameters (can be adjusted, 99 is adjusted to 10 Hz)
+        handleMoveCommand("50 2"); // Shortcut command to expand with predefined parameters
         return;
     }
     if (strcmp(cmd_name, "contract") == 0) {
-        handleMoveCommand("-50 2"); // Shortcut command to contract with predefined parameters (can be adjusted, -99 is adjusted to 10 Hz)
+        handleMoveCommand("-50 2"); // Same as above but for contract
         return;
     }
     if (strcmp(cmd_name, "depth_sensor") == 0) {
-        // to do: read depth sensor value and print it (if connected)
         read_depth_sensor();
         return;
     }
