@@ -1,12 +1,21 @@
 // TODO:
-// 1) Create a function that calibrates the pulses counter at startup.
-// 2) Adapt the expand and contract command to better fit the 10 Hz frequency.
-// 3) Implement a protect system that ensures the driver returned the finished message before processing the next user command.
+// 1. Create a function that calibrates the pulses counter at startup.
+// 2. Adapt the expand and contract command to better fit the 10 Hz frequency.
+// 3. Implement a protect system that ensures the driver returned the finished message before processing the next user command.
 //    - Maybe use semaphore is the easiest way to do this.
 //    - Make sure that the the user receives a message when it tries to send a command while the driver is still running.
 //        - Maybe print a message when the driver finishes too so the user can implement a function that only sends a new command
 //          when it can be sure that the movement stopped.
-// 4) ...
+// 4. ...
+
+// Remember: while the raspberry receives messages from the computer, the driver can still be running, since it only stops
+//           the last command if a stop command is sent, if it hits a limit switch or it ends the last command.
+//           So the movement can still occur while the user is sending a command to raspberry.
+//
+// NOTE: The driver does stop the last command if it receives a new command, but it doesnt say when it stopped (how many steps it did)
+//       it is up to the user to keep in mind this and not send two commands in a row without waiting for the first one to end, otherwise 
+//       it can cause unexpected behavior 
+//       The biggest frequency now is about 20 Hz (50 steps) but it is recommended to use 10 Hz just to make sure
 
 #include <stdio.h>
 #include <string.h>
@@ -141,7 +150,6 @@ void handleMoveCommand(char* args) {
     char* next_ptr;
     long pulses = strtol(args, &next_ptr, 10);
     int speed_raw = (int)strtol(next_ptr, NULL, 10);
-    
     // Fault handling for limit switches
     if(sys_fault){
         switch (sys_error) {
@@ -185,6 +193,8 @@ void handleMoveCommand(char* args) {
         sys_fault = false;
     }
 
+    pulses_counter += (uint32_t)pulses;
+    
     uint32_t abs_pulses = (uint32_t)labs(pulses);
     
     // Byte 2: bit 7 = Direction, bits 0-6 = speed
@@ -217,7 +227,7 @@ void read_depth_sensor() {
      - sends via serial the last read value from the depth sensor, which is updated in the background by another task that continuously reads the sensor (to be implemented).
      - This allows the user to get real-time depth information on demand without blocking the main command
     */
-    printf("CURRENT_DEPTH: %.3f millimeters\n", depth_sensor_value);
+    printf("CURRENT_DEPTH: %.3f centimeters\n", depth_sensor_value);
 }
 
 // --- STRING PROCESS ---
@@ -280,6 +290,10 @@ void processCommand(const char* line) {
     }
     if (strcmp(cmd_name, "depth_sensor") == 0) {
         read_depth_sensor();
+        return;
+    }
+    if (strcmp(cmd_name, "send_current_pulses") == 0) {
+        printf("PULSES_COUNTER: %u pulses (remember to update this value after each restart)\n", pulses_counter); 
         return;
     }
 
@@ -351,20 +365,20 @@ void vDepthSensorTask(void *pvParameters) {
      - Continuously reads the depth sensor value at a defined frequency (e.g. 20 Hz) and updates the global variable.
      - This allows the system to have an up-to-date depth value that can be accessed on demand by the command parser when the
        user requests it.
-     - The task uses vTaskDelay to wait between readings, allowing other tasks to run and ensuring that it does not block the system.
+     - The task uses vTaskDelay to wait between readings, allowing other tasks to run and ensuring that n  it does not block the system.
      - This task takes up to 90 ms (up to 40ms for reading the sensor and 50 ms for the delay) to update the depth_sensor_value.
      - The sensor is pre-initialized in prvSetupHardware() before the RTOS scheduler starts.
     */
     // Check if sensor was properly initialized at startup
 
-    if (!depthSensor.init(i2c0)) {
+    if (!depthSensor.init(i2c1)) {
         printf("[ERROR] Sensor fail\n");
     } else {
         // sets pressure offset to the initial pressure reading at startup.
         depthSensor.read(); 
         pressure_offset = depthSensor.pressure(MS5837::Pa);
         depth_sensor_initialized = true;
-        printf("[Depth sensor]: Successfully initialized on I2C0. Initial pressure offset set to %.2f Pa at startup. Depth is now 0 meters.\n", pressure_offset);
+        printf("[Depth sensor]: Successfully initialized on I2C1. Initial pressure offset set to %.2f Pa at startup. Depth is now 0 meters.\n", pressure_offset);
     }
 
     while (1) {
@@ -373,7 +387,7 @@ void vDepthSensorTask(void *pvParameters) {
             // Calculate depth relative to pressure offset (reference pressure)
             // When set_pressure is called, pressure_offset stores the reference pressure
             float current_pressure = depthSensor.pressure(MS5837::Pa);  // Get absolute pressure in Pa
-            depth_sensor_value = (current_pressure - pressure_offset) / (depthSensor.mbar * 1000.0f * 9.80665f);
+            depth_sensor_value = (current_pressure - pressure_offset) / (depthSensor.mbar * 10.0f * 9.80665f);
             
             vTaskDelay(pdMS_TO_TICKS(50)); // 50 ms delay here + up to 40 ms for reading the sensor = up to 90 ms update time for
                                            // depth_sensor_value, enough for a 10 Hz update rate
@@ -471,11 +485,11 @@ extern "C" void prvSetupHardware(void) {
     gpio_pull_up(SW_MAX_LIMIT);
 
     // Initialize I2C at 100kHz
-    i2c_init(i2c0, 100 * 1000);
-    gpio_set_function(8, GPIO_FUNC_I2C); // SDA
-    gpio_set_function(9, GPIO_FUNC_I2C); // SCL
-    gpio_pull_up(8);
-    gpio_pull_up(9);
+    i2c_init(i2c1, 100 * 1000);
+    gpio_set_function(10, GPIO_FUNC_I2C); // SDA
+    gpio_set_function(11, GPIO_FUNC_I2C); // SCL
+    gpio_pull_up(10);
+    gpio_pull_up(11);
 
     // Registers an interrupt for the falling edge (when the switch closes).
     gpio_set_irq_enabled_with_callback(SW_MIN_LIMIT, GPIO_IRQ_EDGE_FALL, true, &gpio_callback_edge_fall);
@@ -512,14 +526,6 @@ int main() {
                                                                  // from the driver promptly
 
     xTaskCreate(vDepthSensorTask, "Depth", 2048, NULL, 3, NULL); // lower priority than communication with driver and user. Reads and updates depth with offset calibration
-    
-    // Remember: while the raspberry receives messages from the computer, the driver can still be running, since it only stops
-    //           the last command if a stop command is sent, if it hits a limit switch or it ends the last command.
-    //           So the movement can still occur while the user is sending a command to raspberry.
-    //
-    // NOTE: The driver does stop the last command if it receives a new command, but it doesnt say when it stopped (how many steps it did)
-    // it is up to the user to keep in mind this and not send two commands in a row without waiting for the first one to end, otherwise 
-    // it can cause unexpected behavior 
     
     // Start the FreeRTOS scheduler
     vTaskStartScheduler();

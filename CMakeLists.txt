@@ -28,28 +28,28 @@ set(PICO_BOARD pico CACHE STRING "Board type")
 # Pull in Raspberry Pi Pico SDK (must be before project)
 include(pico_sdk_import.cmake)
 
-project(vbs_cpp C CXX ASM)
+project(variable_buoyancy_system C CXX ASM)
 
 # Initialise the Raspberry Pi Pico SDK
 pico_sdk_init()
 
 # Add executable. Default name is the project name, version 0.1
 
-add_executable(vbs_cpp vbs_cpp.cpp MS5837.cpp)
+add_executable(variable_buoyancy_system vbs_cpp.cpp MS5837.cpp)
 
-pico_set_program_name(vbs_cpp "vbs_cpp")
-pico_set_program_version(vbs_cpp "0.1")
+pico_set_program_name(variable_buoyancy_system "variable_buoyancy_system")
+pico_set_program_version(variable_buoyancy_system "0.1")
 
 # Modify the below lines to enable/disable output over UART/USB
-pico_enable_stdio_uart(vbs_cpp 0)
-pico_enable_stdio_usb(vbs_cpp 1)
+pico_enable_stdio_uart(variable_buoyancy_system 0)
+pico_enable_stdio_usb(variable_buoyancy_system 1)
 
-include(C:/Users/lucas/.pico-sdk/sdk/2.2.0/external/pico_sdk_import.cmake)
+include("C:/Users/Lucas Barcaro/.pico-sdk/sdk/2.2.0/external/pico_sdk_import.cmake")
 
-include(C:/VBS/FreeRTOS-Kernel/portable/ThirdParty/GCC/RP2040/FreeRTOS_Kernel_import.cmake)
+include("C:/VBS/VBS/FreeRTOS-Kernel/portable/ThirdParty/GCC/RP2040/FreeRTOS_Kernel_import.cmake")
 
 # Add the standard library to the build
-target_link_libraries(vbs_cpp
+target_link_libraries(variable_buoyancy_system
     pico_stdlib
     hardware_adc
     hardware_i2c
@@ -62,8 +62,8 @@ target_link_libraries(vbs_cpp
     FreeRTOS-Kernel-Heap4      # Gerenciamento de memória
 )
 # Add the standard include files to the build
-target_include_directories(vbs_cpp PRIVATE
+target_include_directories(variable_buoyancy_system PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}
 )
 
-pico_add_extra_outputs(vbs_cpp)
+pico_add_extra_outputs(variable_buoyancy_system)
