@@ -1,3 +1,13 @@
+// TODO:
+// 
+// 1) Separar tratamento de faults em uma função à parte em diferentes partes do código.
+//    Essa função pode ser chamada checkAndHandleFaults() e deve verificar os flags de sys_fault e sys_error
+//    Isso centraliza a lógica de tratamento de faults, tornando o código mais limpo e fácil de manter.
+// 
+// 2) Tratar comandos especiais em uma função separada.
+//  
+// 3) 
+
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -258,14 +268,20 @@ void handleMovePotCommand(char* args) {
     
     uint8_t direction = (potentiometer_value > pot_value) ? 1 : 0;
     uint8_t speed_val = (uint8_t)abs(speed_raw);
+
     if (speed_val > MAX_SPEED_VAL) speed_val = MAX_SPEED_VAL;
+    
     uint8_t val = (direction << 7) | speed_val;
+    
     uint8_t packet[3];
     packet[0] = DRIVER_ADDR;
     packet[1] = 0xF6;
     packet[2] = val;
+    
     sendPacketWithChecksum(packet, 3);
+    
     printf("\n[Pico -> Driver]: Constant move, direction: %d, speed: %d\n", direction, speed_val);
+    
     while(potentiometer_value < pot_value - 3 || potentiometer_value > pot_value + 3){
         vTaskDelay(pdMS_TO_TICKS(50)); // Delay to allow movement and potentiometer update
     }
@@ -273,7 +289,9 @@ void handleMovePotCommand(char* args) {
     uint8_t stop_packet[2];
     stop_packet[0] = DRIVER_ADDR;
     stop_packet[1] = 0xF7;
+    
     sendPacketWithChecksum(stop_packet, 2);
+    
     printf("\n[Pico -> Driver]: Stop\n");
     printf("\nTarget potentiometer value %ld reached. Current value: %d\n", pot_value, potentiometer_value);
 }
@@ -316,26 +334,25 @@ void processCommand(const char* line) {
     }
 
     if (strcmp(cmd_name, "move") == 0) {
-        handleMoveCommand(args); // handles move command separately due to its complexity and argument parsing
+        handleMoveCommand(args); // handles move command separately
         return;
     }
     if (strcmp(cmd_name, "move_until_pot") == 0) {
-        handleMovePotCommand(args); // to do: implement this command to move until a certain potentiometer value is reached
+        handleMovePotCommand(args); // handles move_until_pot command separately
         return;
     }
     if (strcmp(cmd_name, "full_contract") == 0) {
-        handleMovePotCommand("44 2\0");
+        handleMovePotCommand("44 2\0"); // contracts until potentiometer is around +-2 of 44
         return;
     }
     if (strcmp(cmd_name, "full_expand") == 0) {
-        handleMovePotCommand("434 2\0");
+        handleMovePotCommand("434 2\0"); // expands until potentiometer is around +-2 of 434
         return;
     }
 
     for (int i = 0; i < numSimpleCommands; i++) {
         if (strcmp(cmd_name, simpleCommands[i].name) == 0) {
-            uint8_t packet[3]; // max length is 3 for simple commands (ADDR + CMD + 1 optional ARG)
-            
+            uint8_t packet[3]; // max length is 3 for simple commands (ADDR + CMD + CHKSUM)
             packet[0] = DRIVER_ADDR;
             
             memcpy(&packet[1], simpleCommands[i].bytes, simpleCommands[i].length);
