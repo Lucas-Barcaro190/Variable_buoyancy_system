@@ -23,6 +23,7 @@
 #include <ctype.h>
 #include <math.h>
 #include "pico/stdlib.h"
+#include "pico/time.h"
 #include "hardware/uart.h"
 #include "hardware/irq.h"
 #include "hardware/adc.h"
@@ -39,27 +40,31 @@
 #define UART_TX_PIN 4
 #define UART_RX_PIN 5
 #define DRIVER_ADDR 0xE0
-#define MAX_SPEED_VAL 127
-#define RECOMENDED_SPEED_VAL 2
-#define MAX_PULSES 68820      // tested in 16.02.26 @ 2 of speed (300 rpm)
+#define MAX_speedVal 127
+#define RECOMENDED_speedVal 2
+#define MAX_PULSES 68820        // tested in 16.02.26 @ 2 of speed (300 rpm)
 
-#define PIN_ENABLE_DRIVER 16  // High = Driver OFF, Low = Driver ON
-#define SW_MIN_LIMIT 6        // Contracted switch for minimum limit
-#define SW_MAX_LIMIT 7        // Expanded switch for maximum limit
-
+#define PIN_ENABLE_DRIVER 16    // High = Driver OFF, Low = Driver ON
+#define SW_MIN_LIMIT 6          // Contracted switch for minimum limit
+#define SW_MAX_LIMIT 7          // Expanded switch for maximum limit
+#define SW_MIN_LIMIT_ERROR -100
+#define SW_MAX_LIMIT_ERROR -101
+#define NOT_CUSTOM_COMMAND -2
 
 // Global secure state variables for fault handling
-volatile bool sys_fault = false;
-volatile uint8_t sys_error = 0;
-volatile bool sys_back = false;
+volatile bool sysFault = false;
+volatile uint8_t sysError = 0;
 
 // Depth sensor global variables
-volatile float depth_sensor_value = 0;  // Current depth reading in meters
-volatile float pressure_offset = 0.0f;  // Pressure offset for depth calibration (set via 'set_pressure' command)
-volatile bool depth_sensor_initialized = false;  // Track if depth sensor is initialized
+volatile float depthSensorValue = 0;  // Current depth reading in meters
+volatile float pressureOffset = 0.0f;  // Pressure offset for depth calibration (set via 'set_pressure' command)
+volatile bool depthSensorInitialized = false;  // Track if depth sensor is initialized
 
 // Internal pulses counter
-volatile uint32_t pulses_counter = 34410; // start in the middle (first test only).
+volatile uint32_t pulsesCounter = 34410; // start in the middle (first test only).
+
+volatile uint8_t driverBuffer[64];
+volatile uint8_t *driverBufferPtr = driverBuffer;
 
 MS5837 depthSensor; // Create an instance of the MS5837 class to be used for reading depth sensor data
 
@@ -103,7 +108,7 @@ extern "C" {
         while (uart_is_readable(DRIVER_UART)) {
             uint8_t ch = uart_getc(DRIVER_UART);
             
-            BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+            BaseType_t xHigherPriorityTaskWoken = pdFALSE; // ensures the compiler uses the most efficient type
             
             if (xUartQueue != NULL) {
                 xQueueSendFromISR(xUartQueue, &ch, &xHigherPriorityTaskWoken);
@@ -121,7 +126,7 @@ void sendPacketWithChecksum(uint8_t* packetData, int len) {
      - packetData: Array of bytes representing the packet to be sent to the driver (excluding checksum).
      - len: The length of the packetData array.
     behavior:
-     - Calculates a simple checksum by summing all bytes in the packetData and taking the result modulo 256
+     - Calculates a simple checksum by summing all bytes in the packetData and taking the result modulo 0xFF
        (using uint8_t to automatically wrap around).
     */
     uint8_t checksum = 0; // Uses uint8_t to automatically && with 0xFF
@@ -132,6 +137,37 @@ void sendPacketWithChecksum(uint8_t* packetData, int len) {
     }
     
     uart_putc(DRIVER_UART, checksum);
+}
+
+int8_t isSysFault(long pulses){
+    /*
+    params:
+     - pulses: The number of pulses for which to check fault conditions.
+    behavior:
+     - Checks if a system fault is active and handles the appropriate error case based on the current system error state.
+    */
+    if(sysFault){
+        switch (sysError) {
+        
+        case SW_MIN_LIMIT:
+            if (pulses < 0) {
+                printf("\n[Error]: Move to MIN LIMIT blocked by min switch.\n");
+                return SW_MIN_LIMIT_ERROR;
+            }
+            break;
+
+        case SW_MAX_LIMIT:
+            if (pulses > 0) {
+                printf("\n[Error]: Move to MAX LIMIT blocked by max switch.\n");
+                return SW_MAX_LIMIT_ERROR;
+            }
+            break;
+        default:
+            // to do: other errors (?)
+            break;
+        }
+    }
+    return 0;
 }
 
 // --- MOVE COMMAND HANDLER ---
@@ -147,34 +183,14 @@ void handleMoveCommand(char* args) {
         return;
     }
 
-    char* next_ptr;
-    long pulses = strtol(args, &next_ptr, 10);
-    int speed_raw = (int)strtol(next_ptr, NULL, 10);
+    char* nextPtr;
+    long pulses = strtol(args, &nextPtr, 10);
+    int speedRaw = (int)strtol(nextPtr, NULL, 10);
     // Fault handling for limit switches
-    if(sys_fault){
-        switch (sys_error) {
-        
-        case SW_MIN_LIMIT:
-            if (pulses < 0) {
-                printf("\n[Error]: Move to MIN LIMIT blocked by min switch.\n");
-                return;
-            }
-            break;
+    
 
-        case SW_MAX_LIMIT:
-            if (pulses > 0) {
-                printf("\n[Error]: Move to MAX LIMIT blocked by max switch.\n");
-                return;
-            }
-            break;
-        default:
-            // to do: other errors (?)
-            break;
-        }
-    }
-
-    uint8_t speed_val = (uint8_t)abs(speed_raw); // makes sure it's positive
-    if (speed_val > MAX_SPEED_VAL) speed_val = MAX_SPEED_VAL; // caps speed at max value
+    uint8_t speedVal = (uint8_t)abs(speedRaw); // makes sure it's positive
+    if (speedVal > MAX_speedVal) speedVal = MAX_speedVal; // caps speed at max value
 
     uint8_t packet[7];
     packet[0] = DRIVER_ADDR;
@@ -183,51 +199,137 @@ void handleMoveCommand(char* args) {
     uint8_t direction = (pulses < 0) ? 1 : 0;
     
     // Makes sure it doesnt try to move further if it is already in the limit switch, but allows to move in the opposite
-    // direction to get out of the switch
-    if(!direction && sys_error == SW_MIN_LIMIT && !sys_back){
-        sys_error = 0;
-        sys_fault = false;
+    // direction to "get out" of the switch   
+    int8_t faultResult = isSysFault(pulses);
+    if(!direction && faultResult != SW_MAX_LIMIT_ERROR){ // could be written as !(direction || faultResult != SW_MAX_LIMIT_ERROR)
+        sysError = 0;                                    // by the resulting truth table, same to the below one
+        sysFault = false;
     }
-    if(direction && sys_error == SW_MAX_LIMIT && !sys_back){
-        sys_error = 0;
-        sys_fault = false;
+    if(direction && faultResult != SW_MIN_LIMIT_ERROR){
+        sysError = 0;
+        sysFault = false;
     }
-
-    pulses_counter += (uint32_t)pulses;
+    pulsesCounter += (uint32_t)pulses; // TODO: continue implementing the absolute pulses counter 
     
-    uint32_t abs_pulses = (uint32_t)labs(pulses);
+    uint32_t absPulses = (uint32_t)labs(pulses);
     
     // Byte 2: bit 7 = Direction, bits 0-6 = speed
-    packet[2] = (direction << 7) | (speed_val & 0x7F); // Direction in MSB, speed in lower 7 bits
+    packet[2] = (direction << 7) | (speedVal & 0x7F); // Direction in MSB, speed in lower 7 bits
 
     // Pulses in 4 bytes (Big Endian)
     for (int i = 0; i < 4; i++) {
-        packet[3 + i] = (abs_pulses >> (24 - 8 * i)) & 0xFF;
+        packet[3 + i] = (absPulses >> (24 - 8 * i)) & 0xFF;
     }
     // equivalent to:
     //
-    // packet[3] = (abs_pulses >> 24) & 0xFF;
-    // packet[4] = (abs_pulses >> 16) & 0xFF;
-    // packet[5] = (abs_pulses >> 8) & 0xFF;
-    // packet[6] = abs_pulses & 0xFF;
+    // packet[3] = (absPulses >> 24) & 0xFF;
+    // packet[4] = (absPulses >> 16) & 0xFF;
+    // packet[5] = (absPulses >> 8) & 0xFF;
+    // packet[6] = absPulses & 0xFF;
     //
-    //or:
+    // or:
     //
     // packet: [ADDR][CMD][DIR+SPEED ( 1 bit: dir; 7 bits: speed )][PULSES (4 bytes)]
 
     sendPacketWithChecksum(packet, 7);
-    printf("\n[Pico -> Driver]: Move %ld pulses, speed: %d\n", pulses, speed_val);
+    printf("\n[Pico -> Driver]: Move %ld pulses, speed: %d\n", pulses, speedVal);
 }
 
-void read_depth_sensor() {
+void readDepthSensor() {
     /*
     params:
-     - depth_sensor_value: A global variable to hold the current value read from the depth sensor.
+     - depthSensorValue: A global variable to hold the current value read from the depth sensor.
     behavior:
      - sends via serial the last read value from the depth sensor, which is updated in the background by another task that continuously reads the sensor (to be implemented).
      - This allows the user to get real-time depth information on demand without blocking the main command
     */
-    printf("CURRENT_DEPTH: %.3f centimeters\n", depth_sensor_value);
+    printf("CURRENT_DEPTH: %.3f centimeters\n", depthSensorValue);
+}
+
+void printHelp(void){
+    printf("\nAvailable commands:\n");
+    printf(" - move <pulses> <speed>: Move the motor by a specified number of pulses at a given speed (e.g. move 3200 30)\n");
+    printf(" - expand: Shortcut to expand with predefined parameters (equivalent to move 99 2)\n");
+    printf(" - contract: Shortcut to contract with predefined parameters (equivalent to move -99 2)\n");
+    printf(" - stop: Immediately stops the motor\n");
+    printf(" - enable: Enables the driver (allows movement)\n");
+    printf(" - disable: Disables the driver (cuts power, no movement possible)\n");
+    printf(" - depth_sensor: Reads the depth sensor value (if connected)\n");
+
+    for (int i = 0; i < numSimpleCommands; i++) {
+        printf(" - %s\n", simpleCommands[i].name);
+    }
+}
+
+int8_t treatCustomCommand(const char* cmdName, char* args = NULL) {
+    /*
+    params:
+     - cmdName: The name of the command to check and execute if it matches a custom command.
+     - args: A string containing the arguments for the command (if applicable).
+    behavior:
+     - Checks if the cmdName matches any of the custom commands (e.g. "move", "depth_sensor", "help").
+     - If it matches, it executes the corresponding function for that command and returns true.
+     - If it does not match any custom command, it returns false, allowing the caller to check for simple commands
+       or print an error message.
+    */
+
+    if (cmdName == NULL) return -1; // to do: maybe print error for empty command?
+    
+    if (strcmp(cmdName, "help") == 0) {
+        printHelp();
+        return 0;
+    }
+
+    if (strcmp(cmdName, "move") == 0) {
+        handleMoveCommand(args); // handles move command separately due to its complexity and argument parsing
+        return 0;
+    }
+
+    if (strcmp(cmdName, "expand") == 0) {
+        handleMoveCommand("50 2"); // Shortcut command to expand with predefined parameters
+        return 0;
+    }
+
+    if (strcmp(cmdName, "contract") == 0) {
+        handleMoveCommand("-50 2"); // Same as above but for contract
+        return 0;
+    }
+
+    if (strcmp(cmdName, "depth_sensor") == 0) {
+        readDepthSensor();
+        return 0;
+    }
+    
+    if (strcmp(cmdName, "send_current_pulses") == 0) {
+        printf("pulsesCounter: %u pulses (remember to update this value after each restart)\n", pulsesCounter); 
+        return 0;
+    }
+    
+    return NOT_CUSTOM_COMMAND; // Not a custom command
+}
+
+void treatSimpleCommand(const char* cmdName) {
+    /*
+    params:
+     - cmdName: The name of the command to check and execute if it matches a simple command.
+    behavior:
+     - Checks if the cmdName matches any of the predefined simple commands in the simpleCommands array.
+     - If it matches, it sends the corresponding byte sequence to the driver using sendPacketWithChecksum.
+     - If it does not match any simple command, it returns without doing anything, allowing the caller to print an error message.
+    */
+    for (int i = 0; i < numSimpleCommands; i++) {
+        if (strcmp(cmdName, simpleCommands[i].name) == 0) {
+            uint8_t packet[3]; // max length is 3 for simple commands (ADDR + CMD + 1 optional ARG)
+            packet[0] = DRIVER_ADDR;
+            
+            memcpy(&packet[1], simpleCommands[i].bytes, simpleCommands[i].length);
+            
+            sendPacketWithChecksum(packet, simpleCommands[i].length + 1);
+            
+            printf("\n[Pico -> Driver]: Sending '%s' command.\n", cmdName);
+            return;
+        }
+    }
 }
 
 // --- STRING PROCESS ---
@@ -242,80 +344,26 @@ void processCommand(const char* line) {
     strncpy(localBuffer, line, sizeof(localBuffer));
     localBuffer[sizeof(localBuffer) - 1] = '\0'; // Ensure null-termination
 
-    for(int i = 0; localBuffer[i]; i++) localBuffer[i] = (char)tolower((char)localBuffer[i]); // Convert to lowercase for case-insensitive comparison
+    for (int i = 0; localBuffer[i]; i++) localBuffer[i] = (char)tolower((char)localBuffer[i]); // Convert to lowercase
 
-    char* cmd_name = strtok(localBuffer, " "); // Get the command name (first token)
+    char* cmdName = strtok(localBuffer, " "); // Get the command name (first token)
     char* args = strtok(NULL, ""); // Get the rest of the line as arguments (if any)
 
-    if (cmd_name == NULL) return; // to do: maybe print error for empty command?
-    if (strcmp(cmd_name, "help") == 0) {
-        printf("\nAvailable commands:\n");
-        printf(" - move <pulses> <speed>: Move the motor by a specified number of pulses at a given speed (e.g. move 3200 30)\n");
-        printf(" - expand: Shortcut to expand with predefined parameters (equivalent to move 99 2)\n");
-        printf(" - contract: Shortcut to contract with predefined parameters (equivalent to move -99 2)\n");
-        printf(" - stop: Immediately stops the motor\n");
-        printf(" - enable: Enables the driver (allows movement)\n");
-        printf(" - disable: Disables the driver (cuts power, no movement possible)\n");
-        printf(" - depth_sensor: Reads the depth sensor value (if connected)\n");
-
-        for (int i = 0; i < numSimpleCommands; i++) {
-            printf(" - %s\n", simpleCommands[i].name);
-        }
+    int8_t cmdCustom = treatCustomCommand(cmdName, args);
+    if (cmdCustom != NOT_CUSTOM_COMMAND){
+        treatSimpleCommand(cmdName);
         return;
     }
-
-    if (strcmp(cmd_name, "move") == 0) {
-        handleMoveCommand(args); // handles move command separately due to its complexity and argument parsing
-        return;
-    }
-    // baudrate: 115200
-    // W.C.S
-    // bit time: 1/115200 = 8.68 us
-    // pkg time: (1 start bit + 8 data bits + 1 parity bit + 1 stop bit) * 8.68 us = 11 bits * 8.68 us =  95.48 us per pkg
-    // pkg expand => 6 bytes => 6 pkgs => 572.88 us
-    // pkg contract => 8 bytes => 8 pkgs => 763.84 us
-    // 10 Hz => 100 ms => - 1ms of pkg send time
-    // driver speed = 2 => 300 rpm => 5 rps => 200 pulses per rotation => 1000 pulses per second => 100 pulses per 100 ms
-    // 99 pulses per 100 ms excluding the time it takes to receive the command from user.
-    // The time it takes to the driver to receive the command doesnt matter because it can work in parallel with the movement
-    // and the last command is still running while the user is sending the next command.
-
-    if (strcmp(cmd_name, "expand") == 0) {
-        handleMoveCommand("50 2"); // Shortcut command to expand with predefined parameters
-        return;
-    }
-    if (strcmp(cmd_name, "contract") == 0) {
-        handleMoveCommand("-50 2"); // Same as above but for contract
-        return;
-    }
-    if (strcmp(cmd_name, "depth_sensor") == 0) {
-        read_depth_sensor();
-        return;
-    }
-    if (strcmp(cmd_name, "send_current_pulses") == 0) {
-        printf("PULSES_COUNTER: %u pulses (remember to update this value after each restart)\n", pulses_counter); 
-        return;
-    }
-
-    for (int i = 0; i < numSimpleCommands; i++) {
-        if (strcmp(cmd_name, simpleCommands[i].name) == 0) {
-            uint8_t packet[3]; // max length is 3 for simple commands (ADDR + CMD + 1 optional ARG)
-            
-            packet[0] = DRIVER_ADDR;
-            
-            memcpy(&packet[1], simpleCommands[i].bytes, simpleCommands[i].length);
-            
-            sendPacketWithChecksum(packet, simpleCommands[i].length + 1);
-            
-            printf("\n[Pico -> Driver]: Sending '%s' command.\n", cmd_name);
+    else{
+        if (cmdCustom == -1) {
+            printf("\n[Error]: Empty command.\n");
             return;
         }
     }
-    printf("\n[Error]: '%s' unknown command.\n", cmd_name);
 }
 
 // --- INTERRUPT HANDLERS (LIMIT SWITCHES) ---
-static absolute_time_t last_interrupt_time;
+volatile absolute_time_t last_interrupt_time;
 void gpio_callback_edge_fall(uint gpio, uint32_t events) {
     /*
     params:
@@ -323,7 +371,7 @@ void gpio_callback_edge_fall(uint gpio, uint32_t events) {
      - events: The type of event that triggered the interrupt (should be GPIO_IRQ_EDGE_FALL in this case).
     behavior:
      - When a limit switch is triggered (falling edge), it immediately stops the driver to prevent damage.
-     - It sets the sys_fault flag to true and records which switch was triggered in sys_error for diagnostic purposes.
+     - It sets the sysFault flag to true and records which switch was triggered in sysError for diagnostic purposes.
      - It then re-enables the driver but since the switch is still pressed, any attempt to move further in that direction
        will be blocked until the switch is released.
      - The function uses disable_interrupts() and enable_interrupts() to ensure that the critical section of stopping the 
@@ -332,26 +380,29 @@ void gpio_callback_edge_fall(uint gpio, uint32_t events) {
     */
     // Imediate hardware action: Cuts Driver movement to prevent damage
     disable_interrupts();
+    
     processCommand("stop\0");
     
-    sys_fault = true;
+    if ((last_interrupt_time - get_absolute_time()) < 1000000l) return; // acts as a debouncer
+    last_interrupt_time = get_absolute_time();
+
+    sysFault = true;
 
     // diagnostic info for fault handling and making sure the system knows which switch was hit to prevent further
     // movement in that direction until the switch is released
     if (gpio == SW_MIN_LIMIT) {
-        sys_error = SW_MIN_LIMIT;
+        sysError = SW_MIN_LIMIT;
     } else if (gpio == SW_MAX_LIMIT) {
-        sys_error = SW_MAX_LIMIT;
+        sysError = SW_MAX_LIMIT;
     }
-    sys_back = true;
     processCommand("enable\0"); // Re-enable driver after stopping, so it can only be moved in the opposite direction until it
                                 // get out of the limit switch
-    if (sys_error == SW_MIN_LIMIT) {
+    if (sysError == SW_MIN_LIMIT) {
         processCommand("move 1720 2");    // 2102 for Portugal VBS and 1720 for LaSub VBS (1mm)
-    } else if (sys_error == SW_MAX_LIMIT) {
+
+    } else if (sysError == SW_MAX_LIMIT) {
         processCommand("move -1720 2");   // 2102 for Portugal VBS and 1720 for LaSub VBS (1mm)
     }
-    sys_back = false;
     enable_interrupts();
 }
 
@@ -359,14 +410,14 @@ void gpio_callback_edge_fall(uint gpio, uint32_t events) {
 void vDepthSensorTask(void *pvParameters) {
     /*
     params:
-     - depth_sensor_value: A global variable to hold the current value read from the depth sensor.
-     - pressure_offset: A global variable to hold the reference pressure for depth calibration.
+     - depthSensorValue: A global variable to hold the current value read from the depth sensor.
+     - pressureOffset: A global variable to hold the reference pressure for depth calibration.
     behavior:
      - Continuously reads the depth sensor value at a defined frequency (e.g. 20 Hz) and updates the global variable.
      - This allows the system to have an up-to-date depth value that can be accessed on demand by the command parser when the
        user requests it.
      - The task uses vTaskDelay to wait between readings, allowing other tasks to run and ensuring that n  it does not block the system.
-     - This task takes up to 90 ms (up to 40ms for reading the sensor and 50 ms for the delay) to update the depth_sensor_value.
+     - This task takes up to 90 ms (up to 40ms for reading the sensor and 50 ms for the delay) to update the depthSensorValue.
      - The sensor is pre-initialized in prvSetupHardware() before the RTOS scheduler starts.
     */
     // Check if sensor was properly initialized at startup
@@ -376,21 +427,21 @@ void vDepthSensorTask(void *pvParameters) {
     } else {
         // sets pressure offset to the initial pressure reading at startup.
         depthSensor.read(); 
-        pressure_offset = depthSensor.pressure(MS5837::Pa);
-        depth_sensor_initialized = true;
-        printf("[Depth sensor]: Successfully initialized on I2C1. Initial pressure offset set to %.2f Pa at startup. Depth is now 0 meters.\n", pressure_offset);
+        pressureOffset = depthSensor.pressure(MS5837::Pa);
+        depthSensorInitialized = true;
+        printf("[Depth sensor]: Successfully initialized on I2C1. Initial pressure offset set to %.2f Pa at startup. Depth is now 0 meters.\n", pressureOffset);
     }
 
     while (1) {
-        if (depth_sensor_initialized) {
+        if (depthSensorInitialized) {
             depthSensor.read();
             // Calculate depth relative to pressure offset (reference pressure)
-            // When set_pressure is called, pressure_offset stores the reference pressure
-            float current_pressure = depthSensor.pressure(MS5837::Pa);  // Get absolute pressure in Pa
-            depth_sensor_value = (current_pressure - pressure_offset) / (depthSensor.mbar * 10.0f * 9.80665f);
+            // When set_pressure is called, pressureOffset stores the reference pressure
+            float currentPressure = depthSensor.pressure(MS5837::Pa);  // Get absolute pressure in Pa
+            depthSensorValue = (currentPressure - pressureOffset) / (depthSensor.mbar * 10.0f * 9.80665f);
             
             vTaskDelay(pdMS_TO_TICKS(50)); // 50 ms delay here + up to 40 ms for reading the sensor = up to 90 ms update time for
-                                           // depth_sensor_value, enough for a 10 Hz update rate
+                                           // depthSensorValue
         }
         else{
             printf("[Depth Sensor Task]: Sensor not initialized. Depth readings unavailable.\n");
@@ -417,14 +468,21 @@ void vReceiverTask(void *pvParameters) {
 
     while (true) {
         if (xQueueReceive(xUartQueue, &byte, pdMS_TO_TICKS(20))) { // Waits for a byte with a timeout of 20ms
-            if (rxIndex < (int)sizeof(rxBuffer)) rxBuffer[rxIndex++] = byte;
+            if (rxIndex < (int)sizeof(rxBuffer) - 1) rxBuffer[rxIndex++] = byte;
+
         } else if (rxIndex > 0) { // If timeout occurs and we have received bytes, process the message
+            rxBuffer[rxIndex] = '\0';
             printf("\n[Driver -> Pico]: ");
+
             for (int i = 0; i < rxIndex; i++) printf("0x%02X ", rxBuffer[i]); // Print received bytes in hex format
+            
+            memcpy(&driverBufferPtr, (uint8_t *)rxBuffer, rxIndex);
             printf("\n> ");
+
             rxIndex = 0;
         }
     }
+
 }
 
 void vParserTask(void *pvParameters) {
@@ -502,11 +560,11 @@ extern "C" void prvSetupHardware(void) {
     gpio_set_function(UART_RX_PIN, GPIO_FUNC_UART);
 
     // Initial configuration packets to set up the driver in the desired mode (e.g. microstepping, current level, etc.)
-    uint8_t mode_packet[] = {DRIVER_ADDR, 0x82, 0x02}; 
-    sendPacketWithChecksum(mode_packet, 3);
+    uint8_t modePacket[] = {DRIVER_ADDR, 0x82, 0x02}; 
+    sendPacketWithChecksum(modePacket, 3);
 
-    uint8_t en_level_packet[] = {DRIVER_ADDR, 0x85, 0x00}; 
-    sendPacketWithChecksum(en_level_packet, 3);
+    uint8_t enLevelPacket[] = {DRIVER_ADDR, 0x85, 0x00}; 
+    sendPacketWithChecksum(enLevelPacket, 3);
 
     // Create the UART queue for communication between the RX interrupt handler and the receiver task
     xUartQueue = xQueueCreate(128, sizeof(uint8_t));
