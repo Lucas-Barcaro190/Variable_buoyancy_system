@@ -546,7 +546,7 @@ PICO_RP2040:INTERNAL=1
 PICO_RP2350:INTERNAL=0
 //Enable build of SDK tests
 PICO_SDK_TESTS_ENABLED:INTERNAL=
-PICO_TOOLCHAIN_PATH:INTERNAL=C:\Users\Lucas Barcaro/.pico-sdk/toolchain/14_2_Rel1
+PICO_TOOLCHAIN_PATH:INTERNAL=C:/Users/Lucas Barcaro/.pico-sdk/toolchain/14_2_Rel1
 PICO_TOOLS_DIR:INTERNAL=C:/Users/Lucas Barcaro/.pico-sdk/sdk/2.2.0/tools
 //Compiler reason failure
 _Python3_Compiler_REASON_FAILURE:INTERNAL=
@@ -555,7 +555,7 @@ _Python3_Development_REASON_FAILURE:INTERNAL=
 //Path to a program.
 _Python3_EXECUTABLE:INTERNAL=C:/Users/Lucas Barcaro/AppData/Local/Python/pythoncore-3.14-64/python.exe
 //Python3 Properties
-_Python3_INTERPRETER_PROPERTIES:INTERNAL=Python;3;14;3;32;64;;;abi3;C:\Users\Lucas Barcaro\AppData\Local\Python\pythoncore-3.14-64\Lib;C:\Users\Lucas Barcaro\AppData\Local\Python\pythoncore-3.14-64\Lib;C:\Users\Lucas Barcaro\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages;C:\Users\Lucas Barcaro\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages
+_Python3_INTERPRETER_PROPERTIES:INTERNAL=Python;3;14;3;32;64;;;abi3;C:/Users/Lucas Barcaro/AppData/Local/Python/pythoncore-3.14-64/Lib;C:/Users/Lucas Barcaro/AppData/Local/Python/pythoncore-3.14-64/Lib;C:/Users/Lucas Barcaro/AppData/Local/Python/pythoncore-3.14-64/Lib/site-packages;C:/Users/Lucas Barcaro/AppData/Local/Python/pythoncore-3.14-64/Lib/site-packages
 _Python3_INTERPRETER_SIGNATURE:INTERNAL=09c9da4831b1bebc4c8ae1ce4c067a40
 //NumPy reason failure
 _Python3_NumPy_REASON_FAILURE:INTERNAL=

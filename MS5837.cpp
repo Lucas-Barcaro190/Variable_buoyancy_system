@@ -27,7 +27,7 @@ const uint16_t MS5837_02BA_30BA_SEPARATION = 37000;
 const uint16_t MS5837_30BA_MIN_SENSITIVITY = 26000;
 
 MS5837::MS5837() {
-	fluidDensity = 1029;
+	fluidDensity = 997;
 }
 
 bool MS5837::init(i2c_inst_t *i2c_instance) {

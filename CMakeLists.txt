@@ -44,7 +44,7 @@ pico_set_program_version(variable_buoyancy_system "0.1")
 pico_enable_stdio_uart(variable_buoyancy_system 0)
 pico_enable_stdio_usb(variable_buoyancy_system 1)
 
-include("C:/Users/Lucas Barcaro/.pico-sdk/sdk/2.2.0/external/pico_sdk_import.cmake")
+include("C:/Users/LucasB~1/.pico-sdk/sdk/2.2.0/external/pico_sdk_import.cmake")
 
 include("C:/VBS/VBS/FreeRTOS-Kernel/portable/ThirdParty/GCC/RP2040/FreeRTOS_Kernel_import.cmake")
 
