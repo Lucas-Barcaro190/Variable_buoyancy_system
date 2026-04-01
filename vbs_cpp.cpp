@@ -8,7 +8,7 @@
 //          when it can be sure that the movement stopped.
 // 4. ...
 
-// Remember: while the raspberry receives messages from the computer, the driver can still be running, since it only stops
+// Remember: while the raspberr y receives messages from the computer, the driver can still be running, since it only stops
 //           the last command if a stop command is sent, if it hits a limit switch or it ends the last command.
 //           So the movement can still occur while the user is sending a command to raspberry.
 //
@@ -63,8 +63,15 @@ volatile bool depthSensorInitialized = false;  // Track if depth sensor is initi
 // Internal pulses counter
 volatile uint32_t pulsesCounter = 34410; // start in the middle (first test only).
 
+volatile int32_t carryEncoder = 0;
+volatile uint16_t valueEncoder = 0;
+volatile float valueEncoderDegrees = 0;
+
+volatile absolute_time_t wakeTime;
+
 volatile uint8_t driverBuffer[64];
 volatile uint8_t *driverBufferPtr = driverBuffer;
+
 
 MS5837 depthSensor; // Create an instance of the MS5837 class to be used for reading depth sensor data
 
@@ -151,14 +158,14 @@ int8_t isSysFault(long pulses){
         
         case SW_MIN_LIMIT:
             if (pulses < 0) {
-                printf("\n[Error]: Move to MIN LIMIT blocked by min switch.\n");
+                //printf("\n[Error]: Move to MIN LIMIT blocked by min switch.\n");
                 return SW_MIN_LIMIT_ERROR;
             }
             break;
 
         case SW_MAX_LIMIT:
             if (pulses > 0) {
-                printf("\n[Error]: Move to MAX LIMIT blocked by max switch.\n");
+                //printf("\n[Error]: Move to MAX LIMIT blocked by max switch.\n");
                 return SW_MAX_LIMIT_ERROR;
             }
             break;
@@ -179,7 +186,7 @@ void handleMoveCommand(char* args) {
      - Parses the number of pulses and speed from the args string.
     */
     if (args == NULL || strlen(args) == 0) {
-        printf("\n[Error]: 'move' requires <pulses> and <speed> (e.g. move 3200 30)\n");
+        //printf("\n[Error]: 'move' requires <pulses> and <speed> (e.g. move 3200 30)\n");
         return;
     }
 
@@ -232,7 +239,7 @@ void handleMoveCommand(char* args) {
     // packet: [ADDR][CMD][DIR+SPEED ( 1 bit: dir; 7 bits: speed )][PULSES (4 bytes)]
 
     sendPacketWithChecksum(packet, 7);
-    printf("\n[Pico -> Driver]: Move %ld pulses, speed: %d\n", pulses, speedVal);
+    //printf("\n[Pico -> Driver]: Move %ld pulses, speed: %d\n", pulses, speedVal);
 }
 
 void readDepthSensor() {
@@ -243,7 +250,7 @@ void readDepthSensor() {
      - sends via serial the last read value from the depth sensor, which is updated in the background by another task that continuously reads the sensor (to be implemented).
      - This allows the user to get real-time depth information on demand without blocking the main command
     */
-    printf("CURRENT_DEPTH: %.3f centimeters\n", depthSensorValue);
+    //printf("CURRENT_DEPTH: %.3f centimeters\n", depthSensorValue);
 }
 
 void printHelp(void){
@@ -260,6 +267,7 @@ void printHelp(void){
         printf(" - %s\n", simpleCommands[i].name);
     }
 }
+
 
 int8_t treatCustomCommand(const char* cmdName, char* args = NULL) {
     /*
@@ -304,8 +312,41 @@ int8_t treatCustomCommand(const char* cmdName, char* args = NULL) {
         printf("pulsesCounter: %u pulses (remember to update this value after each restart)\n", pulsesCounter); 
         return 0;
     }
-    
+
     return NOT_CUSTOM_COMMAND; // Not a custom command
+}
+
+static bool parseReadEncoderResponse(const uint8_t *buf, int len) {
+    // Expected response: [ADDR=0xE0][carry (int32_t, big endian)][value (uint16_t, big endian)][CRC]
+    // Total: 8 bytes
+    const int expectedFrameSize = 8;
+    if (len < expectedFrameSize || buf[0] != DRIVER_ADDR) {
+        return false;
+    }
+
+    // Parse carry (big endian int32_t)
+    int32_t carry = ((int32_t)buf[1] << 24) | ((int32_t)buf[2] << 16) | ((int32_t)buf[3] << 8) | (int32_t)buf[4];
+
+    // Parse value (big endian uint16_t)
+    uint16_t value = ((uint16_t)buf[5] << 8) | (uint16_t)buf[6];
+
+    // Compute CRC: sum of first 7 bytes
+    uint8_t crc = 0;
+    for (int i = 0; i < 7; i++) {
+        crc += buf[i];
+    }
+
+    if (crc != buf[7]) {
+        return false;
+    }
+
+    // Update global registers directly (driver provides carry and value)
+    carryEncoder = carry;
+    valueEncoder = value;
+    const float inv = 1.0f / 0xFFFF;
+    valueEncoderDegrees = (((float)value * inv) + (float)carryEncoder) * 360.0f;
+
+    return true;
 }
 
 void treatSimpleCommand(const char* cmdName) {
@@ -326,7 +367,7 @@ void treatSimpleCommand(const char* cmdName) {
             
             sendPacketWithChecksum(packet, simpleCommands[i].length + 1);
             
-            printf("\n[Pico -> Driver]: Sending '%s' command.\n", cmdName);
+            //printf("\n[Pico -> Driver]: Sending '%s' command.\n", cmdName);
             return;
         }
     }
@@ -356,7 +397,7 @@ void processCommand(const char* line) {
     }
     else{
         if (cmdCustom == -1) {
-            printf("\n[Error]: Empty command.\n");
+            //printf("\n[Error]: Empty command.\n");
             return;
         }
     }
@@ -423,13 +464,13 @@ void vDepthSensorTask(void *pvParameters) {
     // Check if sensor was properly initialized at startup
 
     if (!depthSensor.init(i2c1)) {
-        printf("[ERROR] Sensor fail\n");
+        //printf("[ERROR] Sensor fail\n");
     } else {
         // sets pressure offset to the initial pressure reading at startup.
         depthSensor.read(); 
         pressureOffset = depthSensor.pressure(MS5837::Pa);
         depthSensorInitialized = true;
-        printf("[Depth sensor]: Successfully initialized on I2C1. Initial pressure offset set to %.2f Pa at startup. Depth is now 0 meters.\n", pressureOffset);
+        //printf("[Depth sensor]: Successfully initialized on I2C1. Initial pressure offset set to %.2f Pa at startup. Depth is now 0 meters.\n", pressureOffset);
     }
 
     while (1) {
@@ -439,12 +480,12 @@ void vDepthSensorTask(void *pvParameters) {
             // When set_pressure is called, pressureOffset stores the reference pressure
             float currentPressure = depthSensor.pressure(MS5837::Pa);  // Get absolute pressure in Pa
             depthSensorValue = (currentPressure - pressureOffset) / (depthSensor.mbar * 10.0f * 9.80665f);
-            
-            vTaskDelay(pdMS_TO_TICKS(50)); // 50 ms delay here + up to 40 ms for reading the sensor = up to 90 ms update time for
+            printf("%lu,%.3f,%.3f,%.3f\n", get_absolute_time() - wakeTime, currentPressure, depthSensor.temperature(), valueEncoderDegrees);
+            vTaskDelay(pdMS_TO_TICKS(60)); // 50 ms delay here + up to 40 ms for reading the sensor = up to 90 ms update time for
                                            // depthSensorValue
         }
         else{
-            printf("[Depth Sensor Task]: Sensor not initialized. Depth readings unavailable.\n");
+            //printf("[Depth Sensor Task]: Sensor not initialized. Depth readings unavailable.\n");
             
             static uint32_t retry_delay = 1000;                            // Start with 1 second
             vTaskDelay(pdMS_TO_TICKS(retry_delay));                        // exponential wait between retries
@@ -461,6 +502,8 @@ void vReceiverTask(void *pvParameters) {
      - rxIndex: Index to keep track of the current position in the rxBuffer.
     behavior:
      - Continuously waits for bytes from the UART RX interrupt via xUartQueue.
+     - Only updates encoder state when a correct read_encoder response is received.
+     - Ignores unrelated responses from driver.
     */
     uint8_t byte;
     uint8_t rxBuffer[64];
@@ -471,13 +514,12 @@ void vReceiverTask(void *pvParameters) {
             if (rxIndex < (int)sizeof(rxBuffer) - 1) rxBuffer[rxIndex++] = byte;
 
         } else if (rxIndex > 0) { // If timeout occurs and we have received bytes, process the message
-            rxBuffer[rxIndex] = '\0';
-            printf("\n[Driver -> Pico]: ");
+            bool success = parseReadEncoderResponse(rxBuffer, rxIndex);
 
-            for (int i = 0; i < rxIndex; i++) printf("0x%02X ", rxBuffer[i]); // Print received bytes in hex format
-            
-            memcpy(&driverBufferPtr, (uint8_t *)rxBuffer, rxIndex);
-            printf("\n> ");
+            // Optional debug output.
+            // printf("[Driver -> Pico] raw (%d bytes) parsed_read_encoder=%d carry=%ld value=%u\n", rxIndex, success, carryEncoder, valueEncoder);
+
+            (void)success; // silence warning if debug is disabled
 
             rxIndex = 0;
         }
@@ -498,7 +540,7 @@ void vParserTask(void *pvParameters) {
     */
     char inputBuffer[128];
     int inputIndex = 0;
-    printf("\n--- VBS Console Online ---\n> ");
+    //printf("\n--- VBS Console Online ---\n> ");
 
     while (true) {
         int c = getchar_timeout_us(10000); 
@@ -510,12 +552,12 @@ void vParserTask(void *pvParameters) {
                 if (inputIndex > 0) processCommand(inputBuffer); // Process the command when Enter is pressed
             
                 inputIndex = 0;
-                printf("> ");
+                //printf("> ");
             
             } else if (c == 8 || c == 127) { // Backspace
                 if (inputIndex > 0) {
                     inputIndex--;
-                    printf("\b \b"); // Move cursor back, print space to erase character, and move back again
+                    //printf("\b \b"); // Move cursor back, print space to erase character, and move back again
                 }
             } else {
                 putchar(c);
@@ -565,6 +607,8 @@ extern "C" void prvSetupHardware(void) {
 
     uint8_t enLevelPacket[] = {DRIVER_ADDR, 0x85, 0x00}; 
     sendPacketWithChecksum(enLevelPacket, 3);
+
+    wakeTime = get_absolute_time();
 
     // Create the UART queue for communication between the RX interrupt handler and the receiver task
     xUartQueue = xQueueCreate(128, sizeof(uint8_t));
