@@ -42,7 +42,7 @@
 #define DRIVER_ADDR 0xE0
 #define MAX_speedVal 127
 #define RECOMENDED_speedVal 2
-#define MAX_PULSES 68820        // tested in 16.02.26 @ 2 of speed (300 rpm)
+#define MAX_PULSES 68800        // tested in 16.02.26 @ 2 of speed (300 rpm)
 
 #define PIN_ENABLE_DRIVER 16    // High = Driver OFF, Low = Driver ON
 #define SW_MIN_LIMIT 6          // Contracted switch for minimum limit
@@ -250,7 +250,20 @@ void readDepthSensor() {
      - sends via serial the last read value from the depth sensor, which is updated in the background by another task that continuously reads the sensor (to be implemented).
      - This allows the user to get real-time depth information on demand without blocking the main command
     */
-    //printf("CURRENT_DEPTH: %.3f centimeters\n", depthSensorValue);
+    if (depthSensorInitialized) {
+        // Get current pressure and temperature
+        float currentPressure = depthSensor.pressure(MS5837::Pa);
+        float temperature = depthSensor.temperature();
+        
+        // Output in CSV format: Pico_Timestamp,Pressure,Temperature,Encoder_Degrees
+        printf("%llu,%.3f,%.3f,%.3f\n", 
+               to_us_since_boot(get_absolute_time()), 
+               currentPressure, 
+               temperature, 
+               valueEncoderDegrees);
+    } else {
+        printf("ERROR: Depth sensor not initialized\n");
+    }
 }
 
 void printHelp(void){
@@ -267,7 +280,6 @@ void printHelp(void){
         printf(" - %s\n", simpleCommands[i].name);
     }
 }
-
 
 int8_t treatCustomCommand(const char* cmdName, char* args = NULL) {
     /*
@@ -389,10 +401,10 @@ void processCommand(const char* line) {
 
     char* cmdName = strtok(localBuffer, " "); // Get the command name (first token)
     char* args = strtok(NULL, ""); // Get the rest of the line as arguments (if any)
+    // printf("\n[User Command]: '%s' with args '%s'\n", cmdName, args ? args : "None");
 
     int8_t cmdCustom = treatCustomCommand(cmdName, args);
     if (cmdCustom != NOT_CUSTOM_COMMAND){
-        treatSimpleCommand(cmdName);
         return;
     }
     else{
@@ -401,6 +413,9 @@ void processCommand(const char* line) {
             return;
         }
     }
+    
+    // If not a custom command, try simple commands
+    treatSimpleCommand(cmdName);
 }
 
 // --- INTERRUPT HANDLERS (LIMIT SWITCHES) ---
@@ -480,7 +495,7 @@ void vDepthSensorTask(void *pvParameters) {
             // When set_pressure is called, pressureOffset stores the reference pressure
             float currentPressure = depthSensor.pressure(MS5837::Pa);  // Get absolute pressure in Pa
             depthSensorValue = (currentPressure - pressureOffset) / (depthSensor.mbar * 10.0f * 9.80665f);
-            printf("%lu,%.3f,%.3f,%.3f\n", get_absolute_time() - wakeTime, currentPressure, depthSensor.temperature(), valueEncoderDegrees);
+            //printf("%lu,%.3f,%.3f,%.3f\n", get_absolute_time() - wakeTime, currentPressure, depthSensor.temperature(), valueEncoderDegrees);
             vTaskDelay(pdMS_TO_TICKS(60)); // 50 ms delay here + up to 40 ms for reading the sensor = up to 90 ms update time for
                                            // depthSensorValue
         }
@@ -564,7 +579,7 @@ void vParserTask(void *pvParameters) {
                 if (inputIndex < (int)sizeof(inputBuffer) - 1) inputBuffer[inputIndex++] = (char)c; // Add character to input buffer if there's space (leave room for null terminator)
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(1));
+        vTaskDelay(pdMS_TO_TICKS(5));
     }
 }
 
