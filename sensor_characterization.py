@@ -10,7 +10,7 @@ import os
 from typing import List, Tuple
 
 class VBSSensorCharacterization:
-    def __init__(self, port: str = "COM3", baudrate: int = 115200):
+    def __init__(self, port: str = "COM5", baudrate: int = 115200):
         self.port = port
         self.baudrate = baudrate
         self.serial = None
@@ -78,7 +78,7 @@ class VBSSensorCharacterization:
         os.makedirs("logs", exist_ok=True)
 
         self.log_file = open(log_path, 'w', encoding='utf-8')
-        self.log_file.write("PC_Timestamp,Pico_Timestamp,Pressure,Temperature,Encoder_Degrees\n")
+        self.log_file.write("PC_Timestamp,Pico_Timestamp,Pressure,Temperature,Encoder_Degrees,steps\n")
         self.log_file.flush()
 
         #print(f"Logging to: {log_path}")
@@ -91,18 +91,19 @@ class VBSSensorCharacterization:
             # CSV format: timestamp,pressure,temperature,encoder (all numeric)
             try:
                 parts = pico_data.split(',')
-                if len(parts) == 4:
+                if len(parts) == 5:
                     # Check if all parts are numeric
                     float(parts[0])  # timestamp
                     float(parts[1])  # pressure
                     float(parts[2])  # temperature
                     float(parts[3])  # encoder
+                    int(parts[4])    # steps
                     
                     pc_timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]  # milliseconds
                     log_line = f"{pc_timestamp},{pico_data}"
                     self.log_file.write(log_line + "\n")
                     self.log_file.flush()
-                    print(log_line)
+                    #print(log_line)
             except (ValueError, IndexError):
                 # Not a valid CSV data line, skip logging
                 pass
@@ -110,21 +111,27 @@ class VBSSensorCharacterization:
     def vbs_command(self, repeat: int, command: str, speed: int = 0, value: int = 0, wait_time: int = 100) -> List[Tuple[str, int]]:
         """Create a list of commands to send"""
         commands = []
+        #print(f"Creating {repeat} commands: {command} with value={value}, speed={speed}, wait_time={wait_time}ms")
         for _ in range(repeat):
             if command == "move":
                 commands.append((f"{command} {value} {speed}", wait_time))
             elif command == "depth_sensor":
+                commands.append((command, wait_time))
+            elif command == " ":
                 commands.append((command, wait_time))
             else:
                 raise ValueError(f"Unknown command: {command}")
         return commands
 
     def create_step_commands(self, repeat: int, value: int) -> List[Tuple[str, int]]:
-        """Create step commands for movement phases"""
+        """Create step commands for movement phases
+            - Move at speed 2 for 86 pulses (1 step) then read depth sensor 4 times
+            - Repeat this pattern for 2 times to create the 1 second step pattern.
+        """
         commands = []
         for _ in range(repeat):
-            commands.extend(self.vbs_command(1, "move", speed=2, value=value, wait_time=3500))
-            commands.extend(self.vbs_command(200, "depth_sensor", wait_time=100))
+            commands.extend(self.vbs_command(1, "move", speed=2, value=value, wait_time=100))
+            commands.extend(self.vbs_command(4, "depth_sensor", wait_time=100))
         return commands
 
     def run_sequence(self):
@@ -133,7 +140,7 @@ class VBSSensorCharacterization:
         sequence_phases = [
             {
                 "message": "Starting reading period of 3 minutes in air...\n=======================================",
-                "commands": self.vbs_command(10, "depth_sensor", wait_time=100),
+                "commands": self.vbs_command(1800, "depth_sensor", wait_time=100),
                 "user_input": None
             },
             {
@@ -142,23 +149,28 @@ class VBSSensorCharacterization:
                 "user_input": "Type 'start' to begin the sequence: "
             },
             {
+                "message": "30 seconds to put the VBS in water and stabilize...",
+                "commands": self.vbs_command(1, " ", wait_time=30000),
+                "user_input": None
+            },
+            {
                 "message": "Starting reading period of 3 minutes in water surface...",
-                "commands": self.vbs_command(10, "depth_sensor", wait_time=100),
+                "commands": self.vbs_command(1800, "depth_sensor", wait_time=100),
                 "user_input": None
             },
             {
                 "message": "Starting descend to full depth phase...",
-                "commands": self.create_step_commands(5, -3440),
+                "commands": sum([self.create_step_commands(2 * 10, value=-86) for _ in range(40)], []),
                 "user_input": None
             },
             {
                 "message": "Starting wait period of 3 minutes at full depth...",
-                "commands": self.vbs_command(10, "depth_sensor", wait_time=100),
+                "commands": self.vbs_command(1800, "depth_sensor", wait_time=100),
                 "user_input": None
             },
             {
                 "message": "Starting ascend to surface phase...",
-                "commands": self.create_step_commands(5, -3440),
+                "commands": sum([self.create_step_commands(2 * 10, value=86) for _ in range(40)], []),
                 "user_input": None
             }
         ]
@@ -194,11 +206,11 @@ class VBSSensorCharacterization:
                     if current_time >= next_action_time:
                         cmd, delay = sequence[step]
                         if self.send_command(cmd):
-                            #print(f">>> SENT [{step}]: {cmd} (Next in: {delay/1000:.1f}s)")
+                            print(f">>> SENT [{step}]: {cmd} (Next in: {delay/1000:.1f}s)")
                             next_action_time = current_time + (delay / 1000.0)
                             step += 1
                         else:
-                            #print("Failed to send command. Aborting sequence.")
+                            print("Failed to send command. Aborting sequence.")
                             break
 
                 # Small delay to prevent CPU hogging

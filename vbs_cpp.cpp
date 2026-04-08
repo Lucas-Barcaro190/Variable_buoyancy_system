@@ -61,7 +61,7 @@ volatile float pressureOffset = 0.0f;  // Pressure offset for depth calibration 
 volatile bool depthSensorInitialized = false;  // Track if depth sensor is initialized
 
 // Internal pulses counter
-volatile uint32_t pulsesCounter = 34410; // start in the middle (first test only).
+volatile uint32_t pulsesCounter = 68800; // start in the middle (first test only).
 
 volatile int32_t carryEncoder = 0;
 volatile uint16_t valueEncoder = 0;
@@ -98,6 +98,8 @@ const SimpleCommand simpleCommands[] = {
 const int numSimpleCommands = sizeof(simpleCommands) / sizeof(simpleCommands[0]);
 
 QueueHandle_t xUartQueue;
+
+void processCommand(const char* line);
 
 // --- INTERRUPT HANDLER (RX DRIVER) ---
 extern "C" {
@@ -207,16 +209,22 @@ void handleMoveCommand(char* args) {
     
     // Makes sure it doesnt try to move further if it is already in the limit switch, but allows to move in the opposite
     // direction to "get out" of the switch   
+    //printf("pulses: %ld, speedVal: %d, direction: %d\n", pulses, speedVal, direction); // debug info for move command
     int8_t faultResult = isSysFault(pulses);
-    if(!direction && faultResult != SW_MAX_LIMIT_ERROR){ // could be written as !(direction || faultResult != SW_MAX_LIMIT_ERROR)
-        sysError = 0;                                    // by the resulting truth table, same to the below one
-        sysFault = false;
+    if(!direction && faultResult == SW_MAX_LIMIT_ERROR){ // could be written as !(direction || faultResult != SW_MAX_LIMIT_ERROR)
+        //printf("DEBUG 1");
+        return;
+    }else{
+        if(direction && faultResult == SW_MIN_LIMIT_ERROR){
+            //printf("DEBUG 2");
+            return;
+        }else{
+            //printf("DEBUG 3");
+            sysError = 0;
+            sysFault = false;
+        }
     }
-    if(direction && faultResult != SW_MIN_LIMIT_ERROR){
-        sysError = 0;
-        sysFault = false;
-    }
-    pulsesCounter += (uint32_t)pulses; // TODO: continue implementing the absolute pulses counter 
+    pulsesCounter += (uint32_t)pulses;
     
     uint32_t absPulses = (uint32_t)labs(pulses);
     
@@ -254,13 +262,14 @@ void readDepthSensor() {
         // Get current pressure and temperature
         float currentPressure = depthSensor.pressure(MS5837::Pa);
         float temperature = depthSensor.temperature();
-        
+        processCommand("read_encoder\0");
         // Output in CSV format: Pico_Timestamp,Pressure,Temperature,Encoder_Degrees
-        printf("%llu,%.3f,%.3f,%.3f\n", 
+        printf("%llu,%.3f,%.3f,%.3f,%u\n", 
                to_us_since_boot(get_absolute_time()), 
                currentPressure, 
                temperature, 
-               valueEncoderDegrees);
+               valueEncoderDegrees,
+               pulsesCounter);
     } else {
         printf("ERROR: Depth sensor not initialized\n");
     }
@@ -385,38 +394,6 @@ void treatSimpleCommand(const char* cmdName) {
     }
 }
 
-// --- STRING PROCESS ---
-void processCommand(const char* line) {
-    /*
-    params:
-     - line: The raw input command string from the user (e.g. "move 3200 30").
-    behavior:
-     - Parses the command name and arguments from the input line.
-    */
-    char localBuffer[64];
-    strncpy(localBuffer, line, sizeof(localBuffer));
-    localBuffer[sizeof(localBuffer) - 1] = '\0'; // Ensure null-termination
-
-    for (int i = 0; localBuffer[i]; i++) localBuffer[i] = (char)tolower((char)localBuffer[i]); // Convert to lowercase
-
-    char* cmdName = strtok(localBuffer, " "); // Get the command name (first token)
-    char* args = strtok(NULL, ""); // Get the rest of the line as arguments (if any)
-    // printf("\n[User Command]: '%s' with args '%s'\n", cmdName, args ? args : "None");
-
-    int8_t cmdCustom = treatCustomCommand(cmdName, args);
-    if (cmdCustom != NOT_CUSTOM_COMMAND){
-        return;
-    }
-    else{
-        if (cmdCustom == -1) {
-            //printf("\n[Error]: Empty command.\n");
-            return;
-        }
-    }
-    
-    // If not a custom command, try simple commands
-    treatSimpleCommand(cmdName);
-}
 
 // --- INTERRUPT HANDLERS (LIMIT SWITCHES) ---
 volatile absolute_time_t last_interrupt_time;
@@ -438,9 +415,6 @@ void gpio_callback_edge_fall(uint gpio, uint32_t events) {
     disable_interrupts();
     
     processCommand("stop\0");
-    
-    if ((last_interrupt_time - get_absolute_time()) < 1000000l) return; // acts as a debouncer
-    last_interrupt_time = get_absolute_time();
 
     sysFault = true;
 
@@ -448,16 +422,16 @@ void gpio_callback_edge_fall(uint gpio, uint32_t events) {
     // movement in that direction until the switch is released
     if (gpio == SW_MIN_LIMIT) {
         sysError = SW_MIN_LIMIT;
-    } else if (gpio == SW_MAX_LIMIT) {
-        sysError = SW_MAX_LIMIT;
-    }
-    processCommand("enable\0"); // Re-enable driver after stopping, so it can only be moved in the opposite direction until it
-                                // get out of the limit switch
-    if (sysError == SW_MIN_LIMIT) {
-        processCommand("move 1720 2");    // 2102 for Portugal VBS and 1720 for LaSub VBS (1mm)
-
-    } else if (sysError == SW_MAX_LIMIT) {
-        processCommand("move -1720 2");   // 2102 for Portugal VBS and 1720 for LaSub VBS (1mm)
+        processCommand("enable\0");
+        processCommand("move 1720 2");
+        //printf("\n[fault]: Minimum limit switch triggered. Movement towards minimum limit blocked until switch is released.\n");
+    } else {
+            if (gpio == SW_MAX_LIMIT) {
+            sysError = SW_MAX_LIMIT;
+            processCommand("enable\0");
+            processCommand("move -1720 2");
+            //printf("\n[fault]: Maximum limit switch triggered. Movement towards maximum limit blocked until switch is released.\n");
+        }
     }
     enable_interrupts();
 }
@@ -527,15 +501,11 @@ void vReceiverTask(void *pvParameters) {
     while (true) {
         if (xQueueReceive(xUartQueue, &byte, pdMS_TO_TICKS(20))) { // Waits for a byte with a timeout of 20ms
             if (rxIndex < (int)sizeof(rxBuffer) - 1) rxBuffer[rxIndex++] = byte;
-
         } else if (rxIndex > 0) { // If timeout occurs and we have received bytes, process the message
             bool success = parseReadEncoderResponse(rxBuffer, rxIndex);
 
             // Optional debug output.
-            // printf("[Driver -> Pico] raw (%d bytes) parsed_read_encoder=%d carry=%ld value=%u\n", rxIndex, success, carryEncoder, valueEncoder);
-
-            (void)success; // silence warning if debug is disabled
-
+            //printf("[Driver -> Pico] raw (%d bytes) parsed_read_encoder=%d carry=%ld value=%u\n", rxIndex, success, carryEncoder, valueEncoder);
             rxIndex = 0;
         }
     }
@@ -572,7 +542,7 @@ void vParserTask(void *pvParameters) {
             } else if (c == 8 || c == 127) { // Backspace
                 if (inputIndex > 0) {
                     inputIndex--;
-                    //printf("\b \b"); // Move cursor back, print space to erase character, and move back again
+                    //  ("\b \b"); // Move cursor back, print space to erase character, and move back again
                 }
             } else {
                 putchar(c);
@@ -638,12 +608,46 @@ int main() {
     prvSetupHardware();
 
     // Create tasks for command parsing and UART reception
-    xTaskCreate(vParserTask, "Parser", 2048, NULL, 4, NULL); // Higher priority for command parsing from the user
-    xTaskCreate(vReceiverTask, "Receiver", 2048, NULL, 5, NULL); // Higher priority for receiver to ensure we process incoming messages 
+    xTaskCreate(vParserTask, "Parser", 2048, NULL, 3, NULL); // Higher priority for command parsing from the user
+    xTaskCreate(vReceiverTask, "Receiver", 2048, NULL, 4, NULL); // Higher priority for receiver to ensure we process incoming messages 
                                                                  // from the driver promptly
 
-    xTaskCreate(vDepthSensorTask, "Depth", 2048, NULL, 3, NULL); // lower priority than communication with driver and user. Reads and updates depth with offset calibration
+    xTaskCreate(vDepthSensorTask, "Depth", 2048, NULL, 2, NULL); // lower priority than communication with driver and user. Reads and updates depth with offset calibration
     
     // Start the FreeRTOS scheduler
     vTaskStartScheduler();
+}
+
+
+// --- STRING PROCESS ---
+void processCommand(const char* line) {
+    /*
+    params:
+     - line: The raw input command string from the user (e.g. "move 3200 30").
+    behavior:
+     - Parses the command name and arguments from the input line.
+    */
+    char localBuffer[64];
+    strncpy(localBuffer, line, sizeof(localBuffer));
+    localBuffer[sizeof(localBuffer) - 1] = '\0'; // Ensure null-termination
+
+    for (int i = 0; localBuffer[i]; i++) localBuffer[i] = (char)tolower((char)localBuffer[i]); // Convert to lowercase
+
+    char* cmdName = strtok(localBuffer, " "); // Get the command name (first token)
+    char* args = strtok(NULL, ""); // Get the rest of the line as arguments (if any)
+    // printf("\n[User Command]: '%s' with args '%s'\n", cmdName, args ? args : "None");
+
+    int8_t cmdCustom = treatCustomCommand(cmdName, args);
+    if (cmdCustom != NOT_CUSTOM_COMMAND){
+        return;
+    }
+    else{
+        if (cmdCustom == -1) {
+            //printf("\n[Error]: Empty command.\n");
+            return;
+        }
+    }
+    
+    // If not a custom command, try simple commands
+    treatSimpleCommand(cmdName);
 }
