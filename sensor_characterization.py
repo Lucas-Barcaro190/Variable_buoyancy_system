@@ -132,6 +132,8 @@ class VBSSensorCharacterization:
         for _ in range(repeat):
             commands.extend(self.vbs_command(1, "move", speed=2, value=value, wait_time=100))
             commands.extend(self.vbs_command(4, "depth_sensor", wait_time=100))
+        for _ in range(200):
+            commands.extend(self.vbs_command(1, "depth_sensor", wait_time=100))
         return commands
 
     def run_sequence(self):
@@ -160,7 +162,7 @@ class VBSSensorCharacterization:
             },
             {
                 "message": "Starting descend to full depth phase...",
-                "commands": sum([self.create_step_commands(2 * 10, value=-86) for _ in range(40)], []),
+                "commands": sum([self.create_step_commands(2 * 20, value=-86) for _ in range(20)], []),
                 "user_input": None
             },
             {
@@ -170,7 +172,7 @@ class VBSSensorCharacterization:
             },
             {
                 "message": "Starting ascend to surface phase...",
-                "commands": sum([self.create_step_commands(2 * 10, value=86) for _ in range(40)], []),
+                "commands": sum([self.create_step_commands(2 * 20, value=86) for _ in range(20)], []),
                 "user_input": None
             }
         ]
