@@ -315,13 +315,12 @@ int8_t treatCustomCommand(const char* cmdName, char* args = NULL) {
     }
 
     if (strcmp(cmdName, "expand") == 0) {
-        handleMoveCommand("86 2"); // Shortcut command to expand 0.05mm (it does in less than 0.1s, to change
-                                   // that we gould lose the 10Hz data aquisition)
+        handleMoveCommand("50 2"); // Shortcut command to expand with predefined parameters
         return 0;
     }
 
     if (strcmp(cmdName, "contract") == 0) {
-        handleMoveCommand("-86 2"); // Same as above but for contract
+        handleMoveCommand("-50 2"); // Same as above but for contract
         return 0;
     }
 

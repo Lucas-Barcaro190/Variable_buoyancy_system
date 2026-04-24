@@ -8,6 +8,7 @@ import time
 import datetime
 import os
 from typing import List, Tuple
+from tqdm import tqdm
 
 class VBSSensorCharacterization:
     def __init__(self, port: str = "COM5", baudrate: int = 115200):
@@ -131,39 +132,46 @@ class VBSSensorCharacterization:
         commands = []
         for _ in range(repeat):
             commands.extend(self.vbs_command(1, "move", speed=2, value=value, wait_time=100))
+            #commands.extend(self.vbs_command(4, "depth_sensor", wait_time=100))
+        #for _ in range(200):
+        #    commands.extend(self.vbs_command(1, "depth_sensor", wait_time=100))
+        return commands
+    
+    def create_step_commands_minimal(self, repeat: int, value: int) -> List[Tuple[str, int]]:
+        """Create step commands for movement phases
+            - Move at speed 2 for 86 pulses (1 step) then read depth sensor 4 times
+            - Repeat this pattern for 2 times to create the 1 second step pattern.
+        """
+        commands = []
+        for _ in range(repeat):
+            commands.extend(self.vbs_command(1, "move", speed=2, value=value, wait_time=100))
             commands.extend(self.vbs_command(4, "depth_sensor", wait_time=100))
         for _ in range(200):
             commands.extend(self.vbs_command(1, "depth_sensor", wait_time=100))
         return commands
-    
 
     def run_sequence(self):
         """Run the main characterization sequence"""
         # Define the sequence phases
         sequence_phases = [
             {
-                "message": "30 seconds to put the VBS in water and stabilize...",
-                "commands": self.vbs_command(1, " ", wait_time=30000),
-                "user_input": None
-            },
-            {
-                "message": "Starting reading period of 3 minutes in water surface...",
-                "commands": self.vbs_command(1800, "depth_sensor", wait_time=100),
-                "user_input": None
-            },
-            {
                 "message": "Starting descend to full depth phase...",
-                "commands": sum([self.create_step_commands(2 * 20, value=-86) for _ in range(20)], []),
+                "commands": sum([self.create_step_commands(2 * 20, value=-86) for _ in range(9)], []),
                 "user_input": None
             },
             {
-                "message": "Starting wait period of 3 minutes at full depth...",
-                "commands": self.vbs_command(1800, "depth_sensor", wait_time=100),
+                "message": "!!!!"    ,
+                "commands": sum([self.create_step_commands_minimal(2 * 20, value=-7) for _ in range(10)], []),  
+                "user_input": None
+            },
+            {
+                "message": "!!!!"    ,
+                "commands": sum([self.create_step_commands_minimal(2 * 20, value=7) for _ in range(10)], []),  
                 "user_input": None
             },
             {
                 "message": "Starting ascend to surface phase...",
-                "commands": sum([self.create_step_commands(2 * 20, value=86) for _ in range(20)], []),
+                "commands": sum([self.create_step_commands(2 * 20, value=86) for _ in range(9)], []),
                 "user_input": None
             }
         ]
@@ -180,38 +188,36 @@ class VBSSensorCharacterization:
                     user_input = input(phase["user_input"])
             sequence.extend(phase["commands"])
 
-        # Main execution loop
-        step = 0
+        # Main execution loop with progress bar
+        progress_bar = tqdm(total=len(sequence), desc="Running sequence")
         start_time = time.time()
         next_action_time = 0
 
         try:
-            while True:
-                current_time = time.time() - start_time
+            for step in range(len(sequence)):
+                cmd, delay = sequence[step]
 
-                # Read any available data from Pico
-                response = self.read_response()
-                if response:
-                    self.log_data(response)
+                # Wait until it's time to send the command
+                while time.time() - start_time < next_action_time:
+                    # Read any available data from Pico
+                    response = self.read_response()
+                    if response:
+                        self.log_data(response)
+                    time.sleep(0.01)
 
-                # Send commands at appropriate times
-                if step < len(sequence):
-                    if current_time >= next_action_time:
-                        cmd, delay = sequence[step]
-                        if self.send_command(cmd):
-                            print(f">>> SENT [{step}]: {cmd} (Next in: {delay/1000:.1f}s)")
-                            next_action_time = current_time + (delay / 1000.0)
-                            step += 1
-                        else:
-                            print("Failed to send command. Aborting sequence.")
-                            break
-
-                # Small delay to prevent CPU hogging
-                time.sleep(0.01)
+                # Send the command
+                if self.send_command(cmd):
+                    # print(f">>> SENT [{step}]: {cmd} (Next in: {delay/1000:.1f}s)")
+                    next_action_time += delay / 1000.0
+                    progress_bar.update(1)
+                else:
+                    print("Failed to send command. Aborting sequence.")
+                    break
 
         except KeyboardInterrupt:
             print("\nSequence interrupted by user")
         finally:
+            progress_bar.close()
             if self.log_file:
                 self.log_file.close()
 
