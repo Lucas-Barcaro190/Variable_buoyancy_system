@@ -142,9 +142,9 @@ class VBSController:
             if self.request_depth_sensor():
                 pid_out = self.pid_update(self.depth, dt)
                 cmd = None
-                if pid_out > deadband:
+                if pid_out < deadband:
                     cmd = "expand"
-                elif pid_out < -deadband:
+                elif pid_out > -deadband:
                     cmd = "contract"
                 if cmd:
                     self.send_command(cmd)
