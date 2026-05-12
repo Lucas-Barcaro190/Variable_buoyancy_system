@@ -15,13 +15,13 @@ import os
 import sys
 import threading
 import time
-
 import serial
 import numpy as np
+from collections import deque
 
 
 class VBSController:
-    def __init__(self, port: str, baudrate: int, kp: float, ki: float, kd: float, setpoint: float, log_path=None):
+    def __init__(self, port: str, baudrate: int, kp: float, ki: float, kd: float, setpoint: float, log_path=None, ma_window: int = 5):
         self.port = port
         self.baudrate = baudrate
         self.serial = None
@@ -39,6 +39,8 @@ class VBSController:
         self.encoder_degrees = 0.0
         self.running = False
         self.log_file = None
+        self.ma_window = ma_window
+        self.depth_buffer = deque(maxlen=ma_window)
 
         if log_path:
             os.makedirs(os.path.dirname(log_path) or ".", exist_ok=True)
@@ -74,58 +76,85 @@ class VBSController:
             print(f"Error sending command: {e}")
             return False
 
-    def read_line(self):
+    def read_line(self) -> str:
+        """Read a line from the serial port"""
         if not self.serial or not self.serial.is_open:
             return ""
+
         try:
-            return self.serial.readline().decode().strip()
-        except:
-            return ""
+            if self.serial.in_waiting > 0:
+                line = self.serial.readline().decode().strip()
+                return line
+        except Exception as e:
+            return
+            print(f"Error reading response: {e}")
+        return ""
+
 
     def request_depth_sensor(self):
         if not self.send_command("depth_sensor"):
+            print("teste 1")
             return False
-        line = self.read_line()
-        if not line:
-            return False
-        parts = line.split(",")
-        if len(parts) < 4:
-            return False
-        try:
-            pico_timestamp = int(parts[0])
-            self.pressure = float(parts[1])
-            self.temperature = float(parts[2])
-            self.encoder_degrees = float(parts[3])
-            if self.pressure_offset is None:
-                self.pressure_offset = self.pressure
-                self.depth = 0.0
-            else:
-                self.depth = (self.pressure - self.pressure_offset) / 9806.0  # Simplified freshwater conversion
-
-            if self.log_file:
-                pc_ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-                self.log_file.write(f"{pc_ts},{pico_timestamp},{self.pressure:.3f},{self.temperature:.3f},{self.encoder_degrees:.3f},{self.depth:.6f}\n")
-                self.log_file.flush()
-            
-            return True
         
-        except ValueError:
-            return False
+        # Read until we get a valid sensor response (skip echoes or invalid lines)
+        timeout = time.time() + 2.0  # 2 second timeout
+        while time.time() < timeout:
+            line = self.read_line()
+            if not line:
+                time.sleep(0.01)  # Small delay before retrying
+                continue
+            
+            parts = line.split(",")
+            if len(parts) >= 4:
+                try:
+                    pico_timestamp = int(parts[0])
+                    self.pressure = float(parts[1])
+                    self.temperature = float(parts[2])
+                    self.encoder_degrees = float(parts[3])
+                    if self.pressure_offset is None:
+                        self.pressure_offset = self.pressure
+                        self.depth = 0.0
+                    else:
+                        self.depth = (self.pressure - self.pressure_offset) / 9806.0  # Simplified freshwater conversion
+
+                    if self.log_file:
+                        pc_ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+                        self.log_file.write(f"{pc_ts},{pico_timestamp},{self.pressure:.3f},{self.temperature:.3f},{self.encoder_degrees:.3f},{self.depth:.6f}\n")
+                        self.log_file.flush()
+                    
+                    return True
+                
+                except ValueError:
+                    print("teste 4")
+                    continue  # Try reading next line
+            
+            # If we get here, line is not valid, continue reading
+            #print(f"Invalid response: {line}")
+        
+        print("teste 2 - timeout")
+        return False
 
     def pid_update(self, measurement: float, dt: float):
         error = self.setpoint - measurement
         self.integral += error * dt
         self.integral = np.clip(self.integral, -self.max_integral, self.max_integral)
-        derivative = ((error - self.error_prev) / dt) if dt > 0 else 0
+        derivative = (error - self.error_prev) / dt if dt > 0 else 0
         output = self.kp * error + self.ki * self.integral + self.kd * derivative
         self.error_prev = error
         
         return output
 
+    def get_moving_average_depth(self) -> float:
+        """Get the moving average of recent depth readings"""
+        if len(self.depth_buffer) == 0:
+            return self.depth
+        return np.mean(self.depth_buffer)
+
     def control_loop(self, interval: float, deadband: float):
         self.running = True
         self.error_prev = 0.0
         self.integral = 0.0
+        self.depth_buffer.clear()
         
         # Take initial sensor reading to set depth zero
         print("Taking initial sensor reading to set depth zero...")
@@ -140,18 +169,21 @@ class VBSController:
             dt = loop_start - last_time
             last_time = loop_start
             if self.request_depth_sensor():
-                pid_out = self.pid_update(self.depth, dt)
+                self.depth_buffer.append(self.depth)
+                smoothed_depth = self.get_moving_average_depth()
+                pid_out = self.pid_update(smoothed_depth, dt)
                 cmd = None
-                if pid_out < deadband:
+                if pid_out > deadband:
                     cmd = "expand"
-                elif pid_out > -deadband:
+                elif pid_out < -deadband:
                     cmd = "contract"
                 if cmd:
                     self.send_command(cmd)
-                print(f"Depth={self.depth:.6f} m | Setpoint={self.setpoint:.6f} m | PID={pid_out:.6f} | Cmd={cmd or 'none'}")
+                print(f"Depth={self.depth:.6f} m | Smoothed={smoothed_depth:.6f} m | Setpoint={self.setpoint:.6f} m | PID={pid_out:.6f} | Cmd={cmd or 'none'}", end="\r")
             else:
                 print("Warning: no sensor response")
             time.sleep(max(0, interval - (time.time() - loop_start)))
+
 
     def stop(self):
         self.running = False
@@ -182,6 +214,7 @@ def main():
     parser.add_argument("--setpoint", type=float, default=0.0)
     parser.add_argument("--interval", type=float, default=0.1)
     parser.add_argument("--deadband", type=float, default=0.00005)
+    parser.add_argument("--ma-window", type=int, default=5, help="Moving average window size")
     parser.add_argument("--log", action="store_true")
     args = parser.parse_args()
 
@@ -190,7 +223,7 @@ def main():
         ts = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
         log_path = os.path.join("logs", f"pid_control_{ts}.csv")
 
-    controller = VBSController(args.port, args.baudrate, args.kp, args.ki, args.kd, args.setpoint, log_path)
+    controller = VBSController(args.port, args.baudrate, args.kp, args.ki, args.kd, args.setpoint, log_path, args.ma_window)
     if not controller.connect():
         return 1
 
