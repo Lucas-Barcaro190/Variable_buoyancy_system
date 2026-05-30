@@ -24,11 +24,12 @@
 #define MAX_PULSES 48351      // tested in 16.02.26 @ 2 of speed (300 rpm)
 
 #define PIN_ENABLE_DRIVER 16  // High = Driver OFF, Low = Driver ON
-#define SW_MIN_LIMIT 6        // Contracted switch for minimum limit
-#define SW_MAX_LIMIT 7        // Expanded switch for maximum limit
-#define POT_ADC_PIN 26        // GPIO26 (ADC0)
-#define POT_ADC_CHANNEL 0     // ADC Channel 0
+#define SW_MIN_LIMIT 3        // Contracted switch for minimum limit
+#define SW_MAX_LIMIT 2        // Expanded switch for maximum limit
+#define POT_ADC_PIN 26        // GPIO27 (ADC0)
+#define POT_ADC_CHANNEL 0     // ADC Channel 1
 #define POT_SAMPLE_COUNT 128
+
 
 volatile uint8_t driver_response[64];
 volatile int driver_response_len = 0;
@@ -41,7 +42,7 @@ volatile bool sys_back = false;
 // Potentiometer global variable
 volatile uint16_t potentiometer_value = 0;
 #define MINIMAL_THRESHOLD 43 // Minimum potentiometer value to consider valid
-#define MAXIMUM_THRESHOLD 435   // Maximum potentiometer value
+#define MAXIMUM_THRESHOLD 466   // Maximum potentiometer value
 
 // --- STRUCTS ---
 struct SimpleCommand {
@@ -324,11 +325,11 @@ void processCommand(const char* line) {
         return;
     }
     if (strcmp(cmd_name, "full_contract") == 0) {
-        handleMovePotCommand("44 2\0");
+        handleMovePotCommand("45 32\0");
         return;
     }
     if (strcmp(cmd_name, "full_expand") == 0) {
-        handleMovePotCommand("434 2\0");
+        handleMovePotCommand("434 32\0");
         return;
     }
 
@@ -382,9 +383,9 @@ void gpio_callback_edge_fall(uint gpio, uint32_t events) {
     processCommand("enable\0"); // Re-enable driver after stopping, so it can only be moved in the opposite direction until it
                                 // get out of the limit switch
     if (sys_error == SW_MIN_LIMIT) {
-        processCommand("move 2102 2");    // 2102 for Portugal VBS and 1720 for LaSub VBS (1mm)
+        processCommand("move 4094 2");    // 4094 for Portugal VBS and 1720 for LaSub VBS (1mm)
     } else if (sys_error == SW_MAX_LIMIT) {
-        processCommand("move -2102 2");   // 2102 for Portugal VBS and 1720 for LaSub VBS (1mm)
+        processCommand("move -4094 2");   // 4094 for Portugal VBS and 1720 for LaSub VBS (1mm)
     }
     sys_back = false;
     enable_interrupts();
@@ -420,7 +421,7 @@ void vPotentiometerTask(void *pvParameters) {
         uint32_t mean = (uint32_t)(sum / POT_SAMPLE_COUNT);
         potentiometer_value = mean;
         
-        //printf("POTENTIOMETER: %d\n", mean);
+        printf("POTENTIOMETER: %d\n", mean);
         // Delay for 10ms
         vTaskDelay(pdMS_TO_TICKS(100));
     }
