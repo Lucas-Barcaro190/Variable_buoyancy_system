@@ -279,6 +279,52 @@ void handleMovePotCommand(char* args) {
     printf("\nTarget potentiometer value %ld reached. Current value: %d\n", pot_value, potentiometer_value);
 }
 
+void handleChangePID(char* args){
+    // Default Kp is 0x650
+    // Default Ki is 0x1
+    // Default Kd is 0x650
+    if (args == NULL || strlen(args) == 0) {
+        printf("\n[Error]: 'change_PID' requires <Kp|Ki|Kd> <value> (e.g. change_PID Kp 1000)\n");
+        return;
+    }
+
+    char* param_name = strtok(args, " ");
+    char* value_str = strtok(NULL, " ");
+
+    if (param_name == NULL || value_str == NULL) {
+        printf("\n[Error]: 'change_PID' requires <Kp|Ki|Kd> <value> (e.g. change_PID Kp 1000)\n");
+        return;
+    }
+
+    uint8_t function_code;
+    if (strcmp(param_name, "kp") == 0) {
+        function_code = 0xA1;
+    } else if (strcmp(param_name, "ki") == 0) {
+        function_code = 0xA2;
+    } else if (strcmp(param_name, "kd") == 0) {
+        function_code = 0xA3;
+    } else {
+        printf("\n[Error]: Unknown PID parameter '%s'. Use Kp, Ki, or Kd.\n", param_name);
+        return;
+    }
+
+    long value = strtol(value_str, NULL, 0);
+    if (value < 0 || value > 0xFFFF) {
+        printf("\n[Error]: PID value must be between 0 and 65535.\n");
+        return;
+    }
+
+    uint16_t pid_value = (uint16_t)value;
+    uint8_t packet[4];
+    packet[0] = DRIVER_ADDR;
+    packet[1] = function_code;
+    packet[2] = (uint8_t)((pid_value >> 8) & 0xFF);
+    packet[3] = (uint8_t)(pid_value & 0xFF);
+
+    sendPacketWithChecksum(packet, 4);
+    printf("\n[Pico -> Driver]: Set %s = 0x%04X (%ld)\n", param_name, pid_value, value);
+}
+
 // --- STRING PROCESS ---
 void processCommand(const char* line) {
     /*
@@ -305,6 +351,7 @@ void processCommand(const char* line) {
         printf(" - move_until_pot <target_value> <speed>: Move until the potentiometer reaches a certain value (e.g. move_until_pot 300 2)\n");
         printf(" - full_contract: Shortcut to fully contract with predefined parameters (equivalent to move_until_pot 43 2)\n");
         printf(" - full_expand: Shortcut to fully expand with predefined parameters (equivalent to move_until_pot 435 2)\n");
+        printf(" - change_PID <Kp|Ki|Kd> <value>: Set the driver PID values (e.g. change_PID Kp 1000)\n");
         printf(" - stop: Immediately stops the motor\n");
         printf(" - enable: Enables the driver (allows movement)\n");
         printf(" - disable: Disables the driver (cuts power, no movement possible)\n");
@@ -330,6 +377,10 @@ void processCommand(const char* line) {
     }
     if (strcmp(cmd_name, "full_expand") == 0) {
         handleMovePotCommand("434 32\0");
+        return;
+    }
+    if (strcmp(cmd_name, "change_pid") == 0) {
+        handleChangePID(args);
         return;
     }
 
@@ -383,9 +434,9 @@ void gpio_callback_edge_fall(uint gpio, uint32_t events) {
     processCommand("enable\0"); // Re-enable driver after stopping, so it can only be moved in the opposite direction until it
                                 // get out of the limit switch
     if (sys_error == SW_MIN_LIMIT) {
-        processCommand("move 4094 2");    // 4094 for Portugal VBS and 1720 for LaSub VBS (1mm)
+        processCommand("move 65504 32");    // 4094 for Portugal VBS and 1720 for LaSub VBS (1mm)
     } else if (sys_error == SW_MAX_LIMIT) {
-        processCommand("move -4094 2");   // 4094 for Portugal VBS and 1720 for LaSub VBS (1mm)
+        processCommand("move -65504 32");   // 4094 for Portugal VBS and 1720 for LaSub VBS (1mm)
     }
     sys_back = false;
     enable_interrupts();
