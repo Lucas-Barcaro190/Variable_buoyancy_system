@@ -58,37 +58,45 @@ def main():
     Kd = 1616
     Kp = 1616
     
-    cycle = 0
     try:
-        while cycle < args.cycles:
-            if(args.changeKd and Kd > 200):
-                message = f"change_PID Kd {Kd - 100}"
-                Kd -= 100
+        for cycle in range (args.cycles):
+            
+            # change Kd block
+            if(args.changeKd):
+                message = f"..."
+                if Kd > 400:
+                    message = f"change_PID Kd {Kd - 100}"
+                    Kd -= 100
+                elif Kd > 70:
+                    message = f"change_PID Kd {Kd - 10}"
+                    Kd -= 10
+                else:
+                    message = f"change_PID Kd {Kd}"
+
                 print(f"New Kd: {Kd}")
                 ser.write((message + "\n").encode())
             
+            # change Kp block
             if(args.changeKp and Kp <= 2000):
-                message = f"change_PID Kp {Kd - 10}"
+                message = f"change_PID Kp {Kp + 10}"
                 ser.write((message + "\n").encode())
-            cycle += 1
 
-            print(f"Cycle {cycle}/{args.cycles}: sending full_expand")
+            # cycle per se
+            print(f"Cycle {cycle}/{args.cycles}: sending move 1506572 32")
 
             try:
                 ser.write(b"move 1506572 32\n")
-
             except Exception as e:
                 print(f"Write failed: {e}")
-            
+
             print("Waiting for response...")
             
             handleResponse()
 
-            print(f"Cycle {cycle}/{args.cycles}: sending full_contract")
+            print(f"Cycle {cycle}/{args.cycles}: sending move -1506572 32")
 
             try:
                 ser.write(b"move -1506572 32\n")
-
             except Exception as e:
                 print(f"Write failed: {e}")
 
@@ -100,7 +108,6 @@ def main():
         try:
             if ser and ser.is_open:
                 ser.close()
-
         except Exception:
             pass
 
