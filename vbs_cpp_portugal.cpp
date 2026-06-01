@@ -259,14 +259,19 @@ void handleMovePotCommand(char* args) {
     
     uint8_t direction = (potentiometer_value > pot_value) ? 1 : 0;
     uint8_t speed_val = (uint8_t)abs(speed_raw);
+    
     if (speed_val > MAX_SPEED_VAL) speed_val = MAX_SPEED_VAL;
+    
     uint8_t val = (direction << 7) | speed_val;
+    
     uint8_t packet[3];
     packet[0] = DRIVER_ADDR;
     packet[1] = 0xF6;
     packet[2] = val;
     sendPacketWithChecksum(packet, 3);
+    
     printf("\n[Pico -> Driver]: Constant move, direction: %d, speed: %d\n", direction, speed_val);
+    
     while(potentiometer_value < pot_value - 3 || potentiometer_value > pot_value + 3){
         vTaskDelay(pdMS_TO_TICKS(50)); // Delay to allow movement and potentiometer update
     }
@@ -315,12 +320,12 @@ void handleChangePID(char* args){
     }
 
     uint16_t pid_value = (uint16_t)value;
+    
     uint8_t packet[4];
     packet[0] = DRIVER_ADDR;
     packet[1] = function_code;
     packet[2] = (uint8_t)((pid_value >> 8) & 0xFF);
     packet[3] = (uint8_t)(pid_value & 0xFF);
-
     sendPacketWithChecksum(packet, 4);
     printf("\n[Pico -> Driver]: Set %s = 0x%04X (%ld)\n", param_name, pid_value, value);
 }
