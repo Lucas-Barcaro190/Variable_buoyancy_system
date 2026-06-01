@@ -62,14 +62,14 @@ def main():
         for cycle in range (args.cycles):
             
             # change Kd block
-            if(args.changeKd):
+            if(args.changeKd and args.cycles < 10):
                 message = f"..."
-                if Kd > 400:
+                if Kd > 200:
                     message = f"change_PID Kd {Kd - 100}"
                     Kd -= 100
-                elif Kd > 70:
-                    message = f"change_PID Kd {Kd - 10}"
-                    Kd -= 10
+                #elif Kd > 70:
+                #    message = f"change_PID Kd {Kd - 10}"
+                #    Kd -= 10
                 else:
                     message = f"change_PID Kd {Kd}"
 
