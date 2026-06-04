@@ -42,19 +42,19 @@
 #define UART_RX_PIN                 5
 #define DRIVER_ADDR                 0xE0
 
-#define PIN_ENABLE_DRIVER           16  // High = Driver OFF, Low = Driver ON
-#define SW_MIN_LIMIT                3        // Contracted switch for minimum limit
-#define SW_MAX_LIMIT                2        // Expanded switch for maximum limit
-#define POT_ADC_PIN                 26        // GPIO26 (ADC0)
-#define POT_ADC_CHANNEL             0     // ADC Channel 0
+#define PIN_ENABLE_DRIVER           16          // High = Driver OFF, Low = Driver ON
+#define SW_MIN_LIMIT                3           // Contracted switch for minimum limit
+#define SW_MAX_LIMIT                2           // Expanded switch for maximum limit
+#define POT_ADC_PIN                 26          // GPIO26 (ADC0)
+#define POT_ADC_CHANNEL             0           // ADC Channel 0
 #define POT_SAMPLE_COUNT            128
 
-#define MINIMAL_THRESHOLD           43   // Minimum potentiometer value to consider valid
-#define MAXIMUM_THRESHOLD           435  // Maximum potentiometer value
+#define MINIMAL_THRESHOLD           43          // Minimum potentiometer value to consider valid
+#define MAXIMUM_THRESHOLD           435         // Maximum potentiometer value
 
 #define MAX_SPEED_VAL               127
 #define RECOMMENDED_SPEED_VAL       32
-#define MAX_PULSES                  1506752       // tested in 16.02.26 @ 2 of speed (300 rpm)
+#define MAX_PULSES                  1506752       // tested in 16.02.26 @ speed=32
 
 // PC Timeout for failsafe (300 seconds = 5 minutes)
 #define PC_TIMEOUT_MS               300000
@@ -105,7 +105,7 @@ typedef enum {
 typedef struct {
     uint8_t cmd_type;              // MotorControlState_t value
     uint16_t target_pot;           // Target potentiometer value
-    uint16_t speed;                // Motor speed (0-127)
+    uint16_t speed;                // Motor speed (0-127) [300 rpm -> speed 2 @ Mstep=1; speed 4 @ Mstep=2; ... ; speed 32 @ Mstep=16]
     uint16_t max_pulses;           // Max pulses for safety timeout
     uint32_t cmd_id;               // Unique command ID for tracking
 } MotorCmd_t;
@@ -207,7 +207,7 @@ StreamBufferHandle_t xDriverRxStream    =   NULL;
 // ============================================================================
 
 // Mutex for potentiometer_value access (protects shared state)
-StaticSemaphore_t xPotMutexBuffer; // kept for compatibility (unused)
+StaticSemaphore_t xPotMutexBuffer; // kept for compatibility (unused -- check if possible to remove)
 SemaphoreHandle_t xPotMutex             =   NULL; // unused
 
 // ============================================================================
@@ -257,7 +257,7 @@ static const char* faultToString(FaultCode_t fault) {
     case FAULT_PC_TIMEOUT:              return "PC_TIMEOUT";
     case FAULT_DRIVER_CHECKSUM:         return "DRIVER_CHECKSUM";
     case FAULT_DRIVER_ACK_TIMEOUT:      return "DRIVER_ACK_TIMEOUT";
-    case FAULT_MOTOR_STALL:             return "MOTOR_STALL";
+    case FAULT_MOTOR_STALL:             return "MOTOR_STALL"; // I need to check this part
     case FAULT_QUEUE_OVERFLOW:          return "QUEUE_OVERFLOW";
     default:                            return "UNKNOWN";
     }
