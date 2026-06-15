@@ -32,7 +32,7 @@
 #define configUSE_TIMERS                        1
 
 /* Necessário para o porte do RP2040 */
-#define configSUPPORT_STATIC_ALLOCATION          0
-#define configSUPPORT_DYNAMIC_ALLOCATION         1
+#define configSUPPORT_STATIC_ALLOCATION         0
+#define configSUPPORT_DYNAMIC_ALLOCATION        1
 
 #endif
