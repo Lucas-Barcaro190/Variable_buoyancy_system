@@ -1,6 +1,8 @@
 /*
  * Variable Buoyancy System (VBS) v2.0 - Refactored RTOS Implementation
- *
+ * 
+ * Phase 1: Foundations (static allocation, structs, stream buffer UART RX)
+ * 
  * Architecture:
  * - ISR_RxDriver (ISR) → Stream buffer
  * - ISR_LimitSwitches (ISR) → Task notifications
@@ -23,16 +25,12 @@
 #include "hardware/adc.h"
 #include "hardware/gpio.h"
 #include "hardware/watchdog.h"
-#include "pico/time.h"
-extern "C" {
-    #include "FreeRTOS.h"
-    #include "task.h"
-    #include "queue.h"
-    #include "stream_buffer.h"
-    #include "semphr.h"
-}
+#include "FreeRTOS.h"
+#include "task.h"
+#include "queue.h"
+#include "stream_buffer.h"
+#include "semphr.h"
 #include <climits>
-#include "FreeRTOS-Kernel/include/task.h"
 
 // ============================================================================
 // HARDWARE CONFIGURATION
@@ -44,19 +42,19 @@ extern "C" {
 #define UART_RX_PIN                 5
 #define DRIVER_ADDR                 0xE0
 
-#define PIN_ENABLE_DRIVER           16          // High = Driver OFF, Low = Driver ON
-#define SW_MIN_LIMIT                3           // Contracted switch for minimum limit
-#define SW_MAX_LIMIT                2           // Expanded switch for maximum limit
-#define POT_ADC_PIN                 26          // GPIO26 (ADC0)
-#define POT_ADC_CHANNEL             0           // ADC Channel 0
+#define PIN_ENABLE_DRIVER           16  // High = Driver OFF, Low = Driver ON
+#define SW_MIN_LIMIT                3        // Contracted switch for minimum limit
+#define SW_MAX_LIMIT                2        // Expanded switch for maximum limit
+#define POT_ADC_PIN                 26        // GPIO26 (ADC0)
+#define POT_ADC_CHANNEL             0     // ADC Channel 0
 #define POT_SAMPLE_COUNT            128
 
-#define MINIMAL_THRESHOLD           43          // Minimum potentiometer value to consider valid
-#define MAXIMUM_THRESHOLD           435         // Maximum potentiometer value
+#define MINIMAL_THRESHOLD           43   // Minimum potentiometer value to consider valid
+#define MAXIMUM_THRESHOLD           435  // Maximum potentiometer value
 
 #define MAX_SPEED_VAL               127
 #define RECOMMENDED_SPEED_VAL       32
-#define MAX_PULSES                  1506752     // tested in 16.02.26 @ 32 of speed (300 rpm)
+#define MAX_PULSES                  1506752       // tested in 16.02.26 @ 2 of speed (300 rpm)
 
 // PC Timeout for failsafe (300 seconds = 5 minutes)
 #define PC_TIMEOUT_MS               300000
@@ -66,13 +64,13 @@ extern "C" {
 // ============================================================================
 
 typedef enum {
-    SYS_INIT,                                   // Startup, running calibration
-    SYS_OPERATIONAL,                            // Normal operation, PC connected
-    SYS_FAILSAFE_ASCENT,                        // PC timeout → auto-expand
-    SYS_CRITICAL_ERROR,                         // Unrecoverable fault (e.g., limit hit)
-    SYS_CALIBRATION_MIN,                        // Seeking min limit
-    SYS_CALIBRATION_MAX,                        // Seeking max limit
-    SYS_MANUAL_CONTROL,                         // Ad-hoc move command
+    SYS_INIT,                    // Startup, running calibration
+    SYS_OPERATIONAL,             // Normal operation, PC connected
+    SYS_FAILSAFE_ASCENT,         // PC timeout → auto-expand
+    SYS_CRITICAL_ERROR,          // Unrecoverable fault (e.g., limit hit)
+    SYS_CALIBRATION_MIN,         // Seeking min limit
+    SYS_CALIBRATION_MAX,         // Seeking max limit
+    SYS_MANUAL_CONTROL,          // Ad-hoc move command
 } SystemState_t;
 
 typedef enum {
@@ -105,30 +103,30 @@ typedef enum {
 // ============================================================================
 
 typedef struct {
-    uint8_t cmd_type;                           // MotorControlState_t value
-    uint16_t target_pot;                        // Target potentiometer value
-    uint16_t speed;                             // Motor speed (0-127)
-    uint16_t max_pulses;                        // Max pulses for safety timeout
-    uint32_t cmd_id;                            // Unique command ID for tracking
+    uint8_t cmd_type;              // MotorControlState_t value
+    uint16_t target_pot;           // Target potentiometer value
+    uint16_t speed;                // Motor speed (0-127)
+    uint16_t max_pulses;           // Max pulses for safety timeout
+    uint32_t cmd_id;               // Unique command ID for tracking
 } MotorCmd_t;
 
 typedef struct {
-    uint8_t response_code;                      // Driver response opcode
-    uint8_t data[62];                           // Response payload
-    uint8_t length;                             // Total payload length
-    uint32_t timestamp_ms;                      // Timestamp when received
+    uint8_t response_code;         // Driver response opcode
+    uint8_t data[62];              // Response payload
+    uint8_t length;                // Total payload length
+    uint32_t timestamp_ms;         // Timestamp when received
 } DriverMsg_t;
 
 typedef struct {
-    uint16_t pot_value;                         // Current potentiometer reading
-    bool min_limit_hit;                         // Minimum limit switch state
-    bool max_limit_hit;                         // Maximum limit switch state
-    uint32_t timestamp_ms;                      // Timestamp of last update
+    uint16_t pot_value;            // Current potentiometer reading
+    bool min_limit_hit;            // Minimum limit switch state
+    bool max_limit_hit;            // Maximum limit switch state
+    uint32_t timestamp_ms;         // Timestamp of last update
 } PositionFeedback_t;
 
 typedef struct {
-    uint8_t fault_code;                         // FaultCode_t value
-    uint32_t timestamp_ms;                      // When fault occurred
+    uint8_t fault_code;            // FaultCode_t value
+    uint32_t timestamp_ms;         // When fault occurred
 } FaultNotif_t;
 
 typedef struct {
@@ -139,7 +137,7 @@ typedef struct {
     uint32_t motor_cmd_queued;
     uint32_t motor_move_complete;
     uint32_t motor_move_timeout;
-    uint32_t fault_count[256];                  // One counter per fault code
+    uint32_t fault_count[256];     // One counter per fault code
     uint32_t pc_heartbeats;
     uint32_t stream_buffer_overflows;
 } Diagnostics_t;
@@ -209,8 +207,8 @@ StreamBufferHandle_t xDriverRxStream    =   NULL;
 // ============================================================================
 
 // Mutex for potentiometer_value access (protects shared state)
-StaticSemaphore_t xPotMutexBuffer;                  //
-SemaphoreHandle_t xPotMutex             =   NULL;   // unused
+StaticSemaphore_t xPotMutexBuffer; // kept for compatibility (unused)
+SemaphoreHandle_t xPotMutex             =   NULL; // unused
 
 // ============================================================================
 // GLOBAL STATE VARIABLES
@@ -285,7 +283,7 @@ void setPotValue(uint16_t val) {
 
 static uint8_t calculateChecksum(const uint8_t* data, int length) {
     uint8_t sum = 0;
-    for (int i = 0; i < length; i++) {              // Process ALL bytes
+    for (int i = 0; i < length; i++) { // Process ALL bytes
         sum = (uint8_t)(data[i] + sum);
     }
     return sum;
@@ -296,7 +294,7 @@ static uint8_t calculateChecksum(const uint8_t* data, int length) {
 // ============================================================================
 
 void sendPacketWithChecksum(const uint8_t* packet, int length) {
-    if ((length < 2 || length > 64) && vbs_should_log(6)) {
+    if (length < 2 || length > 64) {
         printf("[Error] Invalid packet length: %d\n", length);
         return;
     }
@@ -305,13 +303,11 @@ void sendPacketWithChecksum(const uint8_t* packet, int length) {
     
     // Send packet bytes
     // Log the exact bytes that will be sent (hex)
-    if(vbs_should_log(6)){
-        printf("[Pico -> Driver]:");
-        for (int i = 0; i < length; i++) {
-            printf(" 0x%02X", packet[i]);
-        }
-        printf(" checksum=0x%02X\n", checksum);
+    printf("[Pico -> Driver]:");
+    for (int i = 0; i < length; i++) {
+        printf(" 0x%02X", packet[i]);
     }
+    printf(" checksum=0x%02X\n", checksum);
 
     for (int i = 0; i < length; i++) {
         uart_putc(DRIVER_UART, packet[i]);
@@ -325,7 +321,7 @@ void sendStopCommand(void) {
     stop_packet[0] = DRIVER_ADDR;
     stop_packet[1] = 0xF7;
     sendPacketWithChecksum(stop_packet, 2);
-    if(vbs_should_log(6)) printf("[Pico -> Driver]: Stop\n");
+    printf("[Pico -> Driver]: Stop\n");
 }
 
 void sendConstantMoveCommand(uint8_t direction, uint8_t speed) {
@@ -335,7 +331,7 @@ void sendConstantMoveCommand(uint8_t direction, uint8_t speed) {
     packet[1] = 0xF6;
     packet[2] = val;
     sendPacketWithChecksum(packet, 3);
-    if(vbs_should_log(6)) printf("[Pico -> Driver]: Constant move, direction: %d, speed: %d\n", direction, speed);
+    printf("[Pico -> Driver]: Constant move, direction: %d, speed: %d\n", direction, speed);
 }
 
 void sendEnableCommand(void) {
@@ -345,7 +341,7 @@ void sendEnableCommand(void) {
     uint8_t enable_param[1] = {0x01};  // Enable
     uint8_t full_packet[3] = {enable_packet[0], enable_packet[1], enable_param[0]};
     sendPacketWithChecksum(full_packet, 3);
-    if(vbs_should_log(6)) printf("[Pico -> Driver]: Enable\n");
+    printf("[Pico -> Driver]: Enable\n");
 }
 
 void sendDisableCommand(void) {
@@ -354,7 +350,7 @@ void sendDisableCommand(void) {
     disable_packet[1] = 0xF3;
     disable_packet[2] = 0x00;  // Disable
     sendPacketWithChecksum(disable_packet, 3);
-    if(vbs_should_log(6)) printf("[Pico -> Driver]: **DISABLE** (emergency stop)\n");
+    printf("[Pico -> Driver]: **DISABLE** (emergency stop)\n");
 }
 
 // Send a single move-by-pulses command to the driver (0xFD)
@@ -431,8 +427,7 @@ extern "C" {
         BaseType_t xHigherPriorityTaskWoken = pdFALSE;
         uint32_t now_us = time_us_32();
 
-        const uint32_t debounce_window_us = 1000 * 1000;    // 1000ms
-                                                            // full movement should be 4094ms
+        const uint32_t debounce_window_us = 200000;
 
         static uint32_t last_min_trigger_us = 0;
         static uint32_t last_max_trigger_us = 0;
@@ -441,8 +436,7 @@ extern "C" {
             // IMMEDIATE: Send DISABLE command to driver (motor stop via UART)
             if((now_us - last_min_trigger_us) >= debounce_window_us){
                 last_min_trigger_us = now_us;
-                
-                // treating directly here to make sure it stops ASAP
+
                 uint8_t disable_packet[3] = {DRIVER_ADDR, 0xF3, 0x00};
                 uint8_t checksum = calculateChecksum(disable_packet, 3);
                 for (int i = 0; i < 3; i++) {
@@ -461,8 +455,8 @@ extern "C" {
 
         else if (gpio == SW_MAX_LIMIT && (events & GPIO_IRQ_EDGE_FALL)) {
             // IMMEDIATE: Send DISABLE command to driver (motor stop via UART)
+            // Minimal ISR version - no printf to avoid bloating ISR
             if((now_us - last_max_trigger_us) >= debounce_window_us){
-
                 uint8_t disable_packet[3] = {DRIVER_ADDR, 0xF3, 0x00};
                 uint8_t checksum = calculateChecksum(disable_packet, 3);
                 for (int i = 0; i < 3; i++) {
@@ -481,7 +475,6 @@ extern "C" {
         }
         
         portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
-        }
     }
 }
 
@@ -510,13 +503,9 @@ void vMotorControlTask(void *pvParameters) {
         if (xQueueReceive(xMotorCmdQueue, &current_cmd, pdMS_TO_TICKS(50)) == pdTRUE) {
             mctl_state = (MotorControlState_t)current_cmd.cmd_type;
             move_start_time_ms = xTaskGetTickCount();
-            
-            diag.motor_cmd_queued++;
-            
-            if (vbs_should_log(1) || vbs_should_log(6)){
-            printf("[Motor] New command: type=%d, target_pot=%d, speed=%d\n",
-                mctl_state, current_cmd.target_pot, current_cmd.speed);
-            }
+                 diag.motor_cmd_queued++;
+                 if (vbs_should_log(1) || vbs_should_log(6)) printf("[Motor] New command: type=%d, target_pot=%d, speed=%d\n",
+                     mctl_state, current_cmd.target_pot, current_cmd.speed);
         }
         
         // Execute state machine
@@ -540,9 +529,9 @@ void vMotorControlTask(void *pvParameters) {
                 break;
             }
             
-            // Check timeout (3000 seconds per move)
+            // Check timeout (90 seconds per move)
             uint32_t elapsed = xTaskGetTickCount() - move_start_time_ms;
-            if (elapsed > pdMS_TO_TICKS(300000)) {
+            if (elapsed > pdMS_TO_TICKS(90000)) {
                 printf("[Motor] Move timeout (%lu ms)\n", elapsed);
                 sendStopCommand();
                 sys_fault_code = FAULT_DRIVER_ACK_TIMEOUT;
@@ -579,9 +568,9 @@ void vMotorControlTask(void *pvParameters) {
                 break;
             }
             
-            // Check timeout (10 seconds per move)
+            // Check timeout (90 seconds per move)
             uint32_t elapsed = xTaskGetTickCount() - move_start_time_ms;
-            if (elapsed > pdMS_TO_TICKS(10000)) {
+            if (elapsed > pdMS_TO_TICKS(90000)) {
                 printf("[Motor] Absolute move timeout after %lu ms\n", elapsed);
                 sendStopCommand();
                 sys_fault_code = FAULT_DRIVER_ACK_TIMEOUT;
@@ -1225,7 +1214,6 @@ void vDiagnosticsTask(void *pvParameters) {
      */
     if (vbs_should_log(5)) printf("[Diagnostics] Task started\n");
     
-
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(10000));  // Every 10 seconds
         if(verbose_level != 0){
