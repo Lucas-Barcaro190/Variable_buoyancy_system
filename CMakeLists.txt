@@ -33,20 +33,20 @@ project(vbs_cpp_portugal C CXX ASM)
 # Initialise the Raspberry Pi Pico SDK
 pico_sdk_init()
 
-# Add executable. Default name is the project name, version 0.1
+# Add executable. Default name is the project name. Building v2 refactor for testing
 
-add_executable(vbs_cpp_portugal vbs_cpp_portugal.cpp)
+add_executable(vbs_cpp_portugal vbs_portugal_v2.cpp)
 
 pico_set_program_name(vbs_cpp_portugal "vbs_cpp_portugal")
-pico_set_program_version(vbs_cpp_portugal "0.1")
+pico_set_program_version(vbs_cpp_portugal "0.2")
 
 # Modify the below lines to enable/disable output over UART/USB
 pico_enable_stdio_uart(vbs_cpp_portugal 0)
 pico_enable_stdio_usb(vbs_cpp_portugal 1)
 
-include(C:/Users/lucas/.pico-sdk/sdk/2.2.0/external/pico_sdk_import.cmake)
+include("C:/Users/Lucas Barcaro/.pico-sdk/sdk/2.2.0/external/pico_sdk_import.cmake")
 
-include(C:/VBS/FreeRTOS-Kernel/portable/ThirdParty/GCC/RP2040/FreeRTOS_Kernel_import.cmake)
+include(C:/VBS/VBS/FreeRTOS-Kernel/portable/ThirdParty/GCC/RP2040/FreeRTOS_Kernel_import.cmake)
 
 # Add the standard library to the build
 target_link_libraries(vbs_cpp_portugal
