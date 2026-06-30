@@ -35,7 +35,7 @@ pico_sdk_init()
 
 # Add executable. Default name is the project name. Building v2 refactor for testing
 
-add_executable(vbs_cpp_portugal vbs_portugal_v2.cpp)
+add_executable(vbs_cpp_portugal alteracao_manual.cpp)
 
 pico_set_program_name(vbs_cpp_portugal "vbs_cpp_portugal")
 pico_set_program_version(vbs_cpp_portugal "0.2")
@@ -49,6 +49,8 @@ include("C:/Users/Lucas Barcaro/.pico-sdk/sdk/2.2.0/external/pico_sdk_import.cma
 include(C:/VBS/VBS/FreeRTOS-Kernel/portable/ThirdParty/GCC/RP2040/FreeRTOS_Kernel_import.cmake)
 
 # Add the standard library to the build
+pico_generate_pio_header(vbs_cpp_portugal ${CMAKE_CURRENT_LIST_DIR}/stepper_pulse.pio)
+
 target_link_libraries(vbs_cpp_portugal
     pico_stdlib
     hardware_adc
@@ -57,6 +59,7 @@ target_link_libraries(vbs_cpp_portugal
     hardware_timer
     hardware_watchdog
     hardware_clocks
+    hardware_pio
     pico_i2c_slave
     FreeRTOS-Kernel            # O Kernel base
     FreeRTOS-Kernel-Heap4      # Gerenciamento de memória
@@ -64,6 +67,7 @@ target_link_libraries(vbs_cpp_portugal
 # Add the standard include files to the build
 target_include_directories(vbs_cpp_portugal PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}
+        ${CMAKE_CURRENT_BINARY_DIR}
 )
 
 pico_add_extra_outputs(vbs_cpp_portugal)

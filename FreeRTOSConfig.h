@@ -13,9 +13,15 @@
 #define configTOTAL_HEAP_SIZE                   (64 * 1024)
 #define configUSE_IDLE_HOOK                     0
 #define configUSE_TICK_HOOK                     0
+#define configUSE_PASSIVE_IDLE_HOOK             0
 
 /* Suporte para o Raspberry Pi Pico (SMP - Opcional) */
-#define configNUMBER_OF_CORES                   1
+#define configNUMBER_OF_CORES                   2
+#define configNUM_CORES                         2
+#define configUSE_CORE_AFFINITY                 1
+#define configRUN_MULTIPLE_PRIORITIES           0
+#define configTICK_CORE                         0
+#define configSUPPORT_PICO_TIME_INTEROP         1
 
 #define configUSE_TIMERS                        1
 #define configTIMER_TASK_PRIORITY               (configMAX_PRIORITIES - 1)
@@ -32,7 +38,7 @@
 #define configUSE_TIMERS                        1
 
 /* Necessário para o porte do RP2040 */
-#define configSUPPORT_STATIC_ALLOCATION          0
+#define configSUPPORT_STATIC_ALLOCATION          1
 #define configSUPPORT_DYNAMIC_ALLOCATION         1
 
 #endif
