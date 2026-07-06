@@ -1,0 +1,11 @@
+.program stepper_pulse
+.side_set 1 opt
+
+pull block
+out x, 32
+
+pulse_loop:
+  nop       side 1 [7]
+  nop       side 0 [7]
+  jmp x-- pulse_loop
+

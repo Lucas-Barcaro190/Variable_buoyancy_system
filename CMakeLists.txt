@@ -28,27 +28,30 @@ set(PICO_BOARD pico CACHE STRING "Board type")
 # Pull in Raspberry Pi Pico SDK (must be before project)
 include(pico_sdk_import.cmake)
 
-project(variable_buoyancy_system C CXX ASM)
+project(vbs_cpp_portugal C CXX ASM)
 
 # Initialise the Raspberry Pi Pico SDK
 pico_sdk_init()
 
-# Add executable. Default name is the project name, version 0.1
+# Add executable. Default name is the project name. Building v2 refactor for testing
 
-add_executable(variable_buoyancy_system vbs_cpp.cpp MS5837.cpp)
+add_executable(vbs_cpp_portugal alteracao_manual.cpp)
 
-pico_set_program_name(variable_buoyancy_system "variable_buoyancy_system")
-pico_set_program_version(variable_buoyancy_system "0.1")
+pico_set_program_name(vbs_cpp_portugal "vbs_cpp_portugal")
+pico_set_program_version(vbs_cpp_portugal "0.2")
 
 # Modify the below lines to enable/disable output over UART/USB
-pico_enable_stdio_uart(variable_buoyancy_system 0)
-pico_enable_stdio_usb(variable_buoyancy_system 1)
+pico_enable_stdio_uart(vbs_cpp_portugal 0)
+pico_enable_stdio_usb(vbs_cpp_portugal 1)
 
-# FreeRTOS import uses a workspace-relative path to avoid stale absolute paths
-include(${CMAKE_CURRENT_LIST_DIR}/FreeRTOS-Kernel/portable/ThirdParty/GCC/RP2040/FreeRTOS_Kernel_import.cmake)
+include("C:/Users/lucas/.pico-sdk/sdk/2.2.0/external/pico_sdk_import.cmake")
+
+include(C:/VBS/FreeRTOS-Kernel/portable/ThirdParty/GCC/RP2040/FreeRTOS_Kernel_import.cmake)
 
 # Add the standard library to the build
-target_link_libraries(variable_buoyancy_system
+pico_generate_pio_header(vbs_cpp_portugal ${CMAKE_CURRENT_LIST_DIR}/stepper_pulse.pio)
+
+target_link_libraries(vbs_cpp_portugal
     pico_stdlib
     hardware_adc
     hardware_i2c
@@ -56,13 +59,15 @@ target_link_libraries(variable_buoyancy_system
     hardware_timer
     hardware_watchdog
     hardware_clocks
+    hardware_pio
     pico_i2c_slave
     FreeRTOS-Kernel            # O Kernel base
     FreeRTOS-Kernel-Heap4      # Gerenciamento de memória
 )
 # Add the standard include files to the build
-target_include_directories(variable_buoyancy_system PRIVATE
+target_include_directories(vbs_cpp_portugal PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}
+        ${CMAKE_CURRENT_BINARY_DIR}
 )
 
-pico_add_extra_outputs(variable_buoyancy_system)
+pico_add_extra_outputs(vbs_cpp_portugal)

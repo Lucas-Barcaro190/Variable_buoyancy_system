@@ -1,0 +1,318 @@
+<diagram program="umletino" version="15.1"><zoom_level>4</zoom_level><help_text></help_text><element><id>UMLClass</id><coordinates><x>444</x><y>83</y><w>104</w><h>88</h></coordinates><panel_attributes>VBS_Controller
+
+--
+-sysStatus: SystemState
+-currentVolume: float
+-lastHeartbeat: long
+-connectionTimeout: int = 300 // 5 min
+--
++processPCCommand(msg: Message): void
++checkTimeouts(): void
++handleEmergencyStop(): void
++updateBuoyancy(targetCm3: float): void
+--
+Responsibilities
+-- Monitorar timeout de conexão
+-- Gerenciar lógica de Failsafe</panel_attributes><additional_attributes></additional_attributes></element><element><id>UMLClass</id><coordinates><x>664</x><y>7</y><w>92</w><h>80</h></coordinates><panel_attributes>PC_ProtocolHandler
+--
+-header[3]: byte
+-payload: byte[]
+-checksum: byte
+--
++parseMessage(raw: byte[]): bool
++buildStatusMsg(): byte[]
++validateCRC(data: byte[]): bool
++sendPowerWarning(): void
+--
+Responsibilities
+-- Conversão cm3 para pulsos
+-- Devolve pulsos para VBS_Controller
+-- Garantir integridade via Checksum</panel_attributes><additional_attributes></additional_attributes></element><element><id>UMLClass</id><coordinates><x>664</x><y>179</y><w>84</w><h>76</h></coordinates><panel_attributes>MotorDriver_Interface
+--
+-uartID: uart_inst_t = uart1
+-isEnabled: bool
+-baudRate: int = 38400
+--
++sendMove(pulses: long, speed: int): void
++stop(): void
++setEnable(state: bool): void
+--
+Responsibilities
+-- Comunica com o Driver</panel_attributes><additional_attributes></additional_attributes></element><element><id>UMLClass</id><coordinates><x>664</x><y>95</y><w>84</w><h>76</h></coordinates><panel_attributes>FeedbackSystem
+--
+-potValue: uint16_t
+-minLimitHit: bool
+-maxLimitHit: bool
+--
++readPotentiometer(): uint16_t
++getVolumeFromPot(): float
++ISR_LimitSwitch(gpio: uint): void
+--
+</panel_attributes><additional_attributes></additional_attributes></element><element><id>UMLClass</id><coordinates><x>644</x><y>375</y><w>96</w><h>100</h></coordinates><panel_attributes>vbs_inst: VBS_Controller
+--
+sysStatus = FATAL_ERROR_E02
+currentVolume = UNKNOWN
+lastHeartbeat = 15429837
+--
+[Waiting for manual RESET]
+
+driver_instance: MotorDriver_Interface
+--
+isEnabled = FALSE
+uartID = uart1
+--
+[Output: Driver Disabled]
+
+feedback_instance: FeedbackSystem
+--
+minLimitHit = TRUE
+potValue = 43 // MINIMAL_THRESHOLD</panel_attributes><additional_attributes></additional_attributes></element><element><id>UMLClass</id><coordinates><x>332</x><y>375</y><w>168</w><h>140</h></coordinates><panel_attributes>// Estado de Emergência por perda de link com o PC
+vbs_inst: VBS_Controller
+--
+sysStatus = FAILSAFE_ASCENT
+currentVolume = 0.0 // cm3 (Posição intermediária no momento da falha)
+targetVolume = 150.0 // cm3 (Forçado para expansão máxima)
+lastHeartbeat = 1715615000 // &gt; 300s atrás
+powerWarning = TRUE // Movimento longo exige alerta de carga
+--
+[Action: Emergency surfacing initiated]
+
+driver_inst: MotorDriver_Interface
+--
+isEnabled = TRUE
+currentSpeed = 2 // Velocidade nominal de torque máximo
+direction = 0 // Expand
+lastCommand = "MOVE_UNTIL_POT (AUTO)"
+uartID = uart1
+
+feedback_inst: FeedbackSystem
+--
+potValue = 240 // Iniciando subida
+minLimitHit = FALSE
+maxLimitHit = FALSE
+uncertainty = ±2 // Pulsos</panel_attributes><additional_attributes></additional_attributes></element><element><id>UMLClass</id><coordinates><x>508</x><y>375</y><w>128</w><h>140</h></coordinates><panel_attributes>// Estado de bloqueio total após atingir fim de curso
+vbs_inst: VBS_Controller
+--
+sysStatus = CRITICAL_ERROR_E02
+currentVolume = -150.0 // Teoricamente no mínimo
+targetVolume = -150.0 
+lastHeartbeat = 1715616500
+powerWarning = FALSE
+--
+[Action: Driver Disabled to prevent mechanical damage]
+
+driver_inst: MotorDriver_Interface
+--
+isEnabled = FALSE // "Corte de energia" via software
+currentSpeed = 0
+direction = 1 // Estava contraindo
+lastCommand = "STOP (HARDWARE INTERRUPT)"
+uartID = uart1
+
+feedback_inst: FeedbackSystem
+--
+potValue = 43 // SW_MIN_LIMIT atingido
+minLimitHit = TRUE
+maxLimitHit = FALSE
+uncertainty = 0 // Leitura de switch é absoluta</panel_attributes><additional_attributes></additional_attributes></element><element><id>UMLClass</id><coordinates><x>192</x><y>375</y><w>132</w><h>140</h></coordinates><panel_attributes>vbs_inst: VBS_Controller
+--
+sysStatus = OPERATIONAL
+currentVolume = 150.0 // cm3
+targetVolume = 150.0 // cm3
+lastHeartbeat = 1715615300 // Timestamp recente
+powerWarning = FALSE
+--
+[System is stable and holding position]
+
+// Instância do Driver em modo de economia/espera
+driver_inst: MotorDriver_Interface
+--
+isEnabled = TRUE
+currentSpeed = 0
+lastCommand = "STOP"
+uartID = uart1
+
+// Sensores dentro da zona de trabalho segura
+feedback_inst: FeedbackSystem
+--
+potValue = 240 // Valor médio (fora dos limites 43 e 435)
+minLimitHit = FALSE
+maxLimitHit = FALSE
+uncertainty = ±2 // Pulsos
+
+</panel_attributes><additional_attributes></additional_attributes></element><element><id>Relation</id><coordinates><x>224</x><y>647</y><w>84</w><h>16</h></coordinates><panel_attributes>lt=&lt;&lt;&lt;-
+p1 -&gt; p2: Power On / Reset</panel_attributes><additional_attributes>190;20;10;20</additional_attributes></element><element><id>UMLClass</id><coordinates><x>276</x><y>727</y><w>84</w><h>76</h></coordinates><panel_attributes>[p2]
+Calibration
+--
+entry/ move_until_pot(MIN)
+do/ seek limit_switch
+--
+Responsibilities
+-- Achar o zero mecânico
+-- Sincronizar ADC com Volume</panel_attributes><additional_attributes></additional_attributes></element><element><id>Relation</id><coordinates><x>336</x><y>647</y><w>108</w><h>16</h></coordinates><panel_attributes>lt=&lt;&lt;&lt;-
+p2 -&gt; p3: SW_MIN_LIMIT / Pot Valid</panel_attributes><additional_attributes>250;20;10;20</additional_attributes></element><element><id>UMLClass</id><coordinates><x>416</x><y>727</y><w>84</w><h>76</h></coordinates><panel_attributes>[p3]
+Idle
+--
+entry/ isEnabled = TRUE
+entry/ speed = 0
+--
+Responsibilities
+-- Esperar comandos UART0
+-- Monitorar Heartbeat</panel_attributes><additional_attributes></additional_attributes></element><element><id>Relation</id><coordinates><x>316</x><y>615</y><w>152</w><h>40</h></coordinates><panel_attributes>lt=&lt;&lt;&lt;-
+p3 -&gt; p2: Recalibrate CMD</panel_attributes><additional_attributes>10;80;10;20;360;20;360;80</additional_attributes></element><element><id>Relation</id><coordinates><x>480</x><y>647</y><w>112</w><h>16</h></coordinates><panel_attributes>lt=&lt;&lt;&lt;-
+p3 -&gt; p4: CMD_VOLUME / CMD_MOVE</panel_attributes><additional_attributes>260;20;10;20</additional_attributes></element><element><id>UMLClass</id><coordinates><x>552</x><y>727</y><w>112</w><h>76</h></coordinates><panel_attributes>[p4]
+Moving
+--
+do/ move_until_pot(target, v=2)
+do/ checkWatchdogStall()
+--
+Responsibilities
+-- Executar trajetória
+-- Monitorar Stall/Timeout
+
+Watchdog: stop if pot doesn't change in 2X time</panel_attributes><additional_attributes></additional_attributes></element><element><id>Relation</id><coordinates><x>456</x><y>659</y><w>160</w><h>32</h></coordinates><panel_attributes>lt=&lt;&lt;&lt;-
+p4 -&gt; p3: Target Reached / Stop</panel_attributes><additional_attributes>10;10;10;60;380;60;380;10</additional_attributes></element><element><id>Relation</id><coordinates><x>456</x><y>659</y><w>160</w><h>48</h></coordinates><panel_attributes>lt=&lt;&lt;&lt;-
+p4 -&gt; p3: Connection Timeout [5 min]</panel_attributes><additional_attributes>10;10;10;100;380;100;380;10</additional_attributes></element><element><id>Relation</id><coordinates><x>628</x><y>647</y><w>120</w><h>16</h></coordinates><panel_attributes>lt=&lt;&lt;&lt;-
+p4 -&gt; p5: Limit Switch Hit / Watchdog Stall</panel_attributes><additional_attributes>280;20;10;20</additional_attributes></element><element><id>Relation</id><coordinates><x>604</x><y>615</y><w>168</w><h>40</h></coordinates><panel_attributes>lt=&lt;&lt;&lt;-
+p5 -&gt; p4: CMD_OPPOSITE_DIRECTION</panel_attributes><additional_attributes>10;80;10;20;400;20;400;80</additional_attributes></element><element><id>Relation</id><coordinates><x>316</x><y>591</y><w>456</w><h>64</h></coordinates><panel_attributes>lt=&lt;&lt;&lt;-
+p5 -&gt; p2: Manual Reset</panel_attributes><additional_attributes>10;140;10;20;1120;20;1120;140</additional_attributes></element><element><id>UMLClass</id><coordinates><x>724</x><y>727</y><w>84</w><h>76</h></coordinates><panel_attributes>[p5]
+Fault
+--
+entry/ isEnabled = FALSE
+--
+Responsibilities
+-- Bloquear movimentos perigosos
+-- Notificar PC (UART0)</panel_attributes><additional_attributes></additional_attributes></element><element><id>UMLSequenceAllInOne</id><coordinates><x>188</x><y>2051</y><w>392</w><h>352</h></coordinates><panel_attributes>title=Sequence Diagram VBS (Exception Handling - Scenarios A &amp; B)
+obj=Lifeline Computador~a
+obj=Lifeline VBS_Pico:vParserTask~b
+obj=Lifeline VBS_Pico:vPotentiometerTask~c
+obj=Lifeline Driver_Motor~d
+
+combinedFragment=alt~altStall b d; b:[Cenário A: Stall Detectado]
+    b-&gt;b+1: 1: Timer &gt; 2X (Sem delta Pot);on=d
+    b-&gt;&gt;&gt;d : 2: UART1: 0xF7 (STOP); off=d
+    b-&gt;&gt;&gt;a : 3: Erro E03 (Stall Mecânico); on=a
+    a.&gt;b : 4: ACK Error; off=a
+--=altStall
+
+tick=3
+
+combinedFragment=alt~altSwitch d b; d:[Cenário B: Limit Switch ISR]
+    d-&gt;&gt;&gt;b : 5: Hardware Interrupt (Falling Edge);on=d
+    b-&gt;&gt;&gt;d : 6: UART1: 0xF7 (STOP)
+    b-&gt;&gt;&gt;d : 7: UART1: Return 1mm
+    b-&gt;b+1: 8: sysFault = TRUE and sysError = SWLIMIT
+    b-&gt;&gt;&gt;a : 9: Erro E02 (Mechanical Limit Hit); on=a
+    a.&gt;b : 10: ACK Error; off=a
+    b-&gt;&gt;&gt;d : 11: PIN_ENABLE_DRIVER = HIGH (Disable);off=d
+--=altSwitch</panel_attributes><additional_attributes></additional_attributes></element><element><id>UMLSequenceAllInOne</id><coordinates><x>268</x><y>871</y><w>564</w><h>496</h></coordinates><panel_attributes>title=Sequence Diagram VBS (Optimized with Guard Clauses)
+obj=Lifeline Computador~a
+obj=Lifeline VBS_Pico:vParserTask~b
+obj=Lifeline VBS_Pico:vPotentiometerTask~c
+obj=Lifeline Driver_Motor~d
+
+a-&gt;&gt;&gt;b : 1: CMD_VOL (cm3); on=b
+b-&gt;b+1: 2: Validar Checksum; on=b
+
+// Guard Clause: Trata o erro imediatamente e para o fluxo
+combinedFragment=alt~altGuard b a; b:[Checksum Erro]
+    b-&gt;&gt;&gt;a : 3: Erro E01 (Comms Failure); on=a
+    a.&gt;b : 4: ACK Error; off=a
+    b-&gt;b+1: Encerra Processamento
+--=altGuard
+
+// A partir daqui, o Checksum já é garantido como OK
+b-&gt;&gt;&gt;c : 5: Get currentPot; on=c
+c.&gt;b : 6: return pot; off=c
+
+b-&gt;b+1: 7: Calcular Pulsos; on=b
+
+b-&gt;&gt;&gt;a : 8: Power Warning; on=a
+a.&gt;b : 9: ACK Warning; off=a
+
+b-&gt;&gt;&gt;d : 10: UART1: 0xF6 (MOVE, v=2); on=d
+
+combinedFragment=loop~loop1 b c; b:[Enquanto pot != target]
+    c-&gt;&gt;&gt;b : 11: Update Pot (10Hz); on=b
+    b.&gt;c : 12: Processed; off=b;on=d
+    
+    // Tratamento de interrupções físicas e lógicas
+    combinedFragment=alt~altFaults b d; b:[Stall/Limit]
+        b:[Watchdog Stall]
+        b-&gt;&gt;&gt;d : 13: UART1: 0xF7 (STOP)
+        b-&gt;&gt;&gt;a : 14: Erro E03; on=a
+        
+        ..=altFaults; d:[Limit Switch]
+        d-&gt;&gt;&gt;b : 15: Interrupt; on=b
+        b-&gt;&gt;&gt;d : 16: UART1: 0xF7 (STOP); off=d
+        b-&gt;&gt;&gt;a : 17: Erro E02; on=a
+    --=altFaults
+--=loop1
+
+b-&gt;&gt;&gt;d : 18: UART1: 0xF7 (STOP);off=d
+b-&gt;&gt;&gt;a : 19: Sucesso (Posição); on=a
+a.&gt;b : 20: ACK Success; off=a
+
+off=b</panel_attributes><additional_attributes></additional_attributes></element><element><id>UMLSequenceAllInOne</id><coordinates><x>192</x><y>1739</y><w>456</w><h>300</h></coordinates><panel_attributes>title=Sequence Diagram VBS (Happy Path)
+obj=Lifeline Computador~a
+obj=Lifeline VBS_Pico:vParserTask~b
+obj=Lifeline VBS_Pico:vPotentiometerTask~c
+obj=Lifeline Driver_Motor~d
+
+a-&gt;&gt;&gt;b : 1: CMD_VOL (cm3); on=b
+
+b-&gt;b +1: 2: Validar Checksum; on=b
+
+b-&gt;&gt;&gt;c : 3: Get currentPot; on=c
+c.&gt;b : 4: return pot; off=c
+
+b-&gt;b+1: 5: Calcular Pulsos; on=b
+
+b-&gt;&gt;&gt;a : 6: Power Warning; on=a
+a.&gt;b : 7: ACK Warning; off=a
+
+b-&gt;&gt;&gt;d : 8: UART1: 0xF6 (MOVE, v=2); on=d
+
+combinedFragment=loop~loop1 b c; b:[Enquanto pot != target]
+    c-&gt;&gt;&gt;b : 9: Update Pot (10Hz); on=b
+    b.&gt;c : 10: Processed; off=b
+--=loop1
+
+b-&gt;&gt;&gt;d : 11: UART1: 0xF7 (STOP); off=d
+b-&gt;&gt;&gt;a : 12: Sucesso (Posição); on=a
+a.&gt;b : 13: ACK Success; off=a
+
+off=b</panel_attributes><additional_attributes></additional_attributes></element><element><id>UMLState</id><coordinates><x>192</x><y>647</y><w>36</w><h>16</h></coordinates><panel_attributes>initial_state
+p1: 150, 40</panel_attributes><additional_attributes></additional_attributes></element><element><id>UMLState</id><coordinates><x>300</x><y>647</y><w>40</w><h>16</h></coordinates><panel_attributes>[p2]
+Calibration</panel_attributes><additional_attributes></additional_attributes></element><element><id>UMLState</id><coordinates><x>436</x><y>647</y><w>48</w><h>16</h></coordinates><panel_attributes>[p3]
+Idle</panel_attributes><additional_attributes></additional_attributes></element><element><id>UMLState</id><coordinates><x>584</x><y>647</y><w>48</w><h>16</h></coordinates><panel_attributes>[p4]
+Moving</panel_attributes><additional_attributes></additional_attributes></element><element><id>UMLState</id><coordinates><x>740</x><y>647</y><w>48</w><h>16</h></coordinates><panel_attributes>
+[p5]
+Fault
+bg=red
+</panel_attributes><additional_attributes></additional_attributes></element><element><id>Relation</id><coordinates><x>252</x><y>167</y><w>248</w><h>216</h></coordinates><panel_attributes>lt=&lt;.
+</panel_attributes><additional_attributes>600;10;600;400;10;400;10;520</additional_attributes></element><element><id>Relation</id><coordinates><x>412</x><y>167</y><w>136</w><h>216</h></coordinates><panel_attributes>lt=&lt;.
+&lt;&lt;VBS_Controller_inst&gt;&gt;</panel_attributes><additional_attributes>200;10;200;450;10;450;10;520</additional_attributes></element><element><id>Relation</id><coordinates><x>488</x><y>167</y><w>96</w><h>216</h></coordinates><panel_attributes>lt=&lt;.
+</panel_attributes><additional_attributes>10;10;10;450;220;450;220;520</additional_attributes></element><element><id>Relation</id><coordinates><x>488</x><y>167</y><w>216</w><h>216</h></coordinates><panel_attributes>lt=&lt;.
+</panel_attributes><additional_attributes>10;10;10;400;520;400;520;520</additional_attributes></element><element><id>Relation</id><coordinates><x>544</x><y>7</y><w>128</w><h>92</h></coordinates><panel_attributes>lt=&lt;-</panel_attributes><additional_attributes>300;10;170;10;170;210;10;210</additional_attributes></element><element><id>Relation</id><coordinates><x>544</x><y>95</y><w>128</w><h>12</h></coordinates><panel_attributes>lt=&lt;-</panel_attributes><additional_attributes>300;10;10;10</additional_attributes></element><element><id>Relation</id><coordinates><x>544</x><y>103</y><w>128</w><h>88</h></coordinates><panel_attributes>lt=&lt;-</panel_attributes><additional_attributes>300;200;170;200;170;10;10;10</additional_attributes></element><element><id>UMLSequenceAllInOne</id><coordinates><x>192</x><y>1387</y><w>300</w><h>340</h></coordinates><panel_attributes>title=Sequence Diagram VBS (Status Request)
+obj=Lifeline Computador~a
+obj=Lifeline VBS_Pico:vParserTask~b
+obj=Lifeline VBS_Pico:vPotentiometerTask~c
+
+a-&gt;&gt;&gt;b : 1: GET_STATUS; on=b
+b-&gt;b+1: 2: Check sysFault Flag
+
+combinedFragment=alt~altStatus b a; b:[sysFault == FALSE]
+    b-&gt;&gt;&gt;c : 3: Get currentPot; on=c
+    c.&gt;b : 4: return pot; off=c
+    b-&gt;b+1: 5: Convert Pot to Volume (cm3)
+    b-&gt;&gt;&gt;a : 6: Response: OK + Volume; on=a
+    a.&gt;b : 7: ACK; off=a
+
+..=altStatus; b:[sysFault == TRUE]
+    b-&gt;b+1: 8: Retrieve sysError Code
+    b-&gt;&gt;&gt;a : 9: Response: NOK + ErrorCode (E01/E02/E03); on=a
+    a.&gt;b : 10: ACK; off=a
+--=altStatus
+
+off=b</panel_attributes><additional_attributes></additional_attributes></element></diagram>
