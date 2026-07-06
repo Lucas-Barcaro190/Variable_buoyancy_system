@@ -424,6 +424,8 @@ extern "C" {
          * 2. Queues automatic 1mm back-off in opposite direction
          * 3. Enters CRITICAL_ERROR state
          */
+        printf("%i\n", gpio);
+        printf("%i\n", events);
         BaseType_t xHigherPriorityTaskWoken = pdFALSE;
         uint32_t now_us = time_us_32();
 
@@ -451,11 +453,13 @@ extern "C" {
                     eSetBits,
                     &xHigherPriorityTaskWoken
                     );
-        } 
-
+            }
+        }
+        
         else if (gpio == SW_MAX_LIMIT && (events & GPIO_IRQ_EDGE_FALL)) {
             // IMMEDIATE: Send DISABLE command to driver (motor stop via UART)
             // Minimal ISR version - no printf to avoid bloating ISR
+            printf("[ISR] Max limit switch triggered, sending DISABLE command.\n");
             if((now_us - last_max_trigger_us) >= debounce_window_us){
                 uint8_t disable_packet[3] = {DRIVER_ADDR, 0xF3, 0x00};
                 uint8_t checksum = calculateChecksum(disable_packet, 3);
@@ -474,9 +478,10 @@ extern "C" {
             }
         }
         
-        portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
     }
 }
+
 
 // ============================================================================
 // TASK: vMotorControlTask (Priority 6 - Real-time)
@@ -529,9 +534,9 @@ void vMotorControlTask(void *pvParameters) {
                 break;
             }
             
-            // Check timeout (90 seconds per move)
+            // Check timeout (900 seconds per move)
             uint32_t elapsed = xTaskGetTickCount() - move_start_time_ms;
-            if (elapsed > pdMS_TO_TICKS(90000)) {
+            if (elapsed > pdMS_TO_TICKS(900000)) {
                 printf("[Motor] Move timeout (%lu ms)\n", elapsed);
                 sendStopCommand();
                 sys_fault_code = FAULT_DRIVER_ACK_TIMEOUT;
@@ -568,9 +573,9 @@ void vMotorControlTask(void *pvParameters) {
                 break;
             }
             
-            // Check timeout (90 seconds per move)
+            // Check timeout (900 seconds per move)
             uint32_t elapsed = xTaskGetTickCount() - move_start_time_ms;
-            if (elapsed > pdMS_TO_TICKS(90000)) {
+            if (elapsed > pdMS_TO_TICKS(900000)) {
                 printf("[Motor] Absolute move timeout after %lu ms\n", elapsed);
                 sendStopCommand();
                 sys_fault_code = FAULT_DRIVER_ACK_TIMEOUT;
@@ -887,8 +892,8 @@ void vParserTask(void *pvParameters) {
                                 if (abs((int)now - pot) <= 3) {
                                     break;
                                 }
-                                // Optional timeout (90s)
-                                if ((xTaskGetTickCount() - start) > pdMS_TO_TICKS(90000)) {
+                                // Optional timeout (900s)
+                                if ((xTaskGetTickCount() - start) > pdMS_TO_TICKS(900000)) {
                                     printf("move_pot: timeout waiting for pot target %d (current %d)\n", pot, now);
                                     break;
                                 }
@@ -1039,7 +1044,7 @@ void vFaultManagerTask(void *pvParameters) {
             // Send a single pulses move command and let driver run it
             uint8_t direction = 0; // expand away from min
             uint8_t speed = 32;
-            uint32_t pulses = 8188;
+            uint32_t pulses = 65511;
             sendMovePulses(pulses, direction, speed);
 
             // Wait for driver ACK and completion (preferred) or fallback to pot stability
@@ -1127,7 +1132,7 @@ void vFaultManagerTask(void *pvParameters) {
             // Send a single pulses move command and let driver run it
             uint8_t direction = 1; // contract away from max
             uint8_t speed = 32;
-            uint32_t pulses = 4094;
+            uint32_t pulses = 65511;
             sendMovePulses(pulses, direction, speed);
 
             // Wait for driver ACK and completion (preferred) or fallback to pot stability

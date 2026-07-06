@@ -44,9 +44,9 @@ pico_set_program_version(vbs_cpp_portugal "0.2")
 pico_enable_stdio_uart(vbs_cpp_portugal 0)
 pico_enable_stdio_usb(vbs_cpp_portugal 1)
 
-include("C:/Users/Lucas Barcaro/.pico-sdk/sdk/2.2.0/external/pico_sdk_import.cmake")
+include("C:/Users/lucas/.pico-sdk/sdk/2.2.0/external/pico_sdk_import.cmake")
 
-include(C:/VBS/VBS/FreeRTOS-Kernel/portable/ThirdParty/GCC/RP2040/FreeRTOS_Kernel_import.cmake)
+include(C:/VBS/FreeRTOS-Kernel/portable/ThirdParty/GCC/RP2040/FreeRTOS_Kernel_import.cmake)
 
 # Add the standard library to the build
 pico_generate_pio_header(vbs_cpp_portugal ${CMAKE_CURRENT_LIST_DIR}/stepper_pulse.pio)

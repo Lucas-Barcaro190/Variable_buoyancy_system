@@ -459,6 +459,7 @@ void setup_stepper_pio(void) {
     sm_config_set_out_shift(&c, true, false, 32);
     
     pio_sm_init(stepper_pio, stepper_sm, stepper_offset, &c);
+    pio_sm_set_consecutive_pindirs(stepper_pio, stepper_sm, PIN_MOTOR_PULSE, 1, true);
     pio_sm_set_enabled(stepper_pio, stepper_sm, true);
     
     // Direction pin as GPIO OUT

@@ -41,7 +41,7 @@
 
 #define PIN_MOTOR_PULSE             4           // GPIO4 for Step/Pulse (PIO side-set)
 #define PIN_MOTOR_DIR               5           // GPIO5 for Direction (GPIO)
-#define PIN_ENABLE_DRIVER           16          // High = Driver OFF, Low = Driver ON
+#define PIN_ENABLE_DRIVER           12          // High = Driver OFF, Low = Driver ON
 #define SW_MIN_LIMIT                3           // Contracted switch for minimum limit
 #define SW_MAX_LIMIT                2           // Expanded switch for maximum limit
 #define POT_ADC_PIN                 26          // GPIO26 (ADC0)
@@ -52,11 +52,11 @@
 #define MAXIMUM_THRESHOLD           435         // Maximum potentiometer value
 #define POT_RANGE                   ((float)(MAXIMUM_THRESHOLD - MINIMAL_THRESHOLD))
 
-#define RECOMMENDED_SPEED_VAL       32
-#define MAX_SPEED_VAL               127
-
 // PC Timeout for failsafe (300 seconds = 5 minutes)
 #define PC_TIMEOUT_MS               300000
+
+#define RECOMMENDED_SPEED_VAL       32 
+#define MAX_SPEED_VAL               127
 
 // Physical limits of buoyancy engine
 #define MAX_PISTON_POSITION         23.0f       // Max travel from midpoint (mm)
@@ -73,6 +73,11 @@ static spin_lock_t* vbs_shared_lock = nullptr;
 static volatile uint16_t target_pot_shared = 196;
 static volatile bool flag_min_limit_hit = false;
 static volatile bool flag_max_limit_hit = false;
+static volatile bool limit_switches_ready = false;
+static volatile bool pending_min_limit_event = false;
+static volatile bool pending_max_limit_event = false;
+static volatile uint32_t last_min_limit_event_us = 0;
+static volatile uint32_t last_max_limit_event_us = 0;
 static volatile uint8_t vbsAddress = 0xE0;
 
 // ============================================================================
@@ -371,10 +376,11 @@ uint16_t getPotValue(void) {
     return val;
 }
 
-void setPotValue(uint16_t val) {
+uint16_t setPotValue(uint16_t val) {
     uint32_t flags = spin_lock_blocking(vbs_shared_lock);
     potentiometer_value = val;
     spin_unlock(vbs_shared_lock, flags);
+    return val;
 }
 
 uint16_t get_target_pot_value(void) {
@@ -413,6 +419,7 @@ void setup_stepper_pio(void) {
     sm_config_set_out_shift(&c, true, false, 32);
     
     pio_sm_init(stepper_pio, stepper_sm, stepper_offset, &c);
+    pio_sm_set_consecutive_pindirs(stepper_pio, stepper_sm, PIN_MOTOR_PULSE, 1, true);
     pio_sm_set_enabled(stepper_pio, stepper_sm, true);
     
     // Direction pin as GPIO OUT
@@ -422,8 +429,16 @@ void setup_stepper_pio(void) {
 }
 
 void send_stepper_pulses(uint32_t count) {
-    if (count == 0) return;
+    //if (count == 0) return;
     pio_sm_put_blocking(stepper_pio, stepper_sm, count - 1);
+    printf("[Send stepper pulses] Sending %lu pulses\n", (unsigned long)count);
+    //for(uint32_t i = 0; i < count; i++) {
+    //    printf("[Send stepper pulses] Pulse %lu\n", (unsigned long)i + 1);
+    //    gpio_put(PIN_MOTOR_PULSE, 1);
+    //    busy_wait_us(500); // Adjust delay as needed
+    //    gpio_put(PIN_MOTOR_PULSE, 0);
+    //    busy_wait_us(500); // Adjust delay as needed
+    //}
 }
 
 bool is_stepper_busy(void) {
@@ -504,11 +519,6 @@ static float volumeToPistonPos(float vol_cm3) {
     return clampf(vol_cm3 / VOL_MULTIPLIER, -MAX_PISTON_POSITION, MAX_PISTON_POSITION);
 }
 
-
-// ============================================================================
-// UART DRIVER COMMUNICATION
-// ============================================================================
-
 void sendStopCommand(void) {
     stop_stepper_pio();
     printf("[HW -> Stepper]: Stop pulses\n");
@@ -520,7 +530,7 @@ void sendEnableCommand(void) {
 }
 
 void sendDisableCommand(void) {
-    gpio_put(PIN_ENABLE_DRIVER, 1); // Active Low Disable
+    gpio_put(PIN_ENABLE_DRIVER, 1); // Active High Disable
     stop_stepper_pio();
     printf("[HW -> Stepper]: **DISABLE** (emergency stop)\n");
 }
@@ -530,25 +540,73 @@ void sendDisableCommand(void) {
 // ============================================================================
 
 void gpio_limit_switches_callback(uint gpio, uint32_t events) {
-    (void)events;
+    if (!limit_switches_ready) {
+        return;
+    }
+
+    if ((events & GPIO_IRQ_EDGE_FALL) == 0) {
+        return;
+    }
+
+    if (gpio_get(gpio) != 0) {
+        return;
+    }
+
+    uint32_t now_us = time_us_32();
+    volatile uint32_t* last_event_us = (gpio == SW_MIN_LIMIT) ? &last_min_limit_event_us : &last_max_limit_event_us;
+    const uint32_t debounce_window_us = 50000;
+
+    if (now_us - *last_event_us < debounce_window_us) {
+        return;
+    }
+    *last_event_us = now_us;
+
     if (gpio == SW_MIN_LIMIT) {
-        flag_min_limit_hit = true;
+        pending_min_limit_event = true;
     } else if (gpio == SW_MAX_LIMIT) {
-        flag_max_limit_hit = true;
+        pending_max_limit_event = true;
+    }
+}
+
+static void evaluate_pending_limit_switches(void) {
+    if (pending_min_limit_event) {
+        pending_min_limit_event = false;
+        if (!gpio_get(SW_MIN_LIMIT) && (time_us_32() - last_min_limit_event_us) > 20000) {
+            flag_min_limit_hit = true;
+        }
+    }
+
+    if (pending_max_limit_event) {
+        pending_max_limit_event = false;
+        if (!gpio_get(SW_MAX_LIMIT) && (time_us_32() - last_max_limit_event_us) > 20000) {
+            flag_max_limit_hit = true;
+        }
     }
 }
 
 void setup_limit_switches_on_core1(void) {
+    limit_switches_ready = false;
+    last_min_limit_event_us = 0;
+    last_max_limit_event_us = 0;
+
     gpio_init(SW_MIN_LIMIT);
     gpio_set_dir(SW_MIN_LIMIT, GPIO_IN);
     gpio_pull_up(SW_MIN_LIMIT);
-    
+    gpio_set_input_hysteresis_enabled(SW_MIN_LIMIT, true);
+
     gpio_init(SW_MAX_LIMIT);
     gpio_set_dir(SW_MAX_LIMIT, GPIO_IN);
     gpio_pull_up(SW_MAX_LIMIT);
-    
+    gpio_set_input_hysteresis_enabled(SW_MAX_LIMIT, true);
+
+    gpio_set_irq_enabled_with_callback(SW_MIN_LIMIT, GPIO_IRQ_EDGE_FALL, false, &gpio_limit_switches_callback);
+    gpio_set_irq_enabled(SW_MAX_LIMIT, GPIO_IRQ_EDGE_FALL, false);
+
+    busy_wait_ms(250);
+
     gpio_set_irq_enabled_with_callback(SW_MIN_LIMIT, GPIO_IRQ_EDGE_FALL, true, &gpio_limit_switches_callback);
     gpio_set_irq_enabled(SW_MAX_LIMIT, GPIO_IRQ_EDGE_FALL, true);
+    limit_switches_ready = true;
 }
 
 // ============================================================================
@@ -572,6 +630,8 @@ void vMotorControlTask(void *pvParameters) {
     if (vbs_should_log(1)) printf("[Motor] 5Hz Task started on Core 0\n");
     
     for (;;) {
+        evaluate_pending_limit_switches();
+
         // 1. Guardrail de Segurança Física Absoluta - Check Limit Switch Flags
         if (flag_min_limit_hit) {
             printf("[Motor] **CRITICAL** Min limit switch hit! Recovering with 8188 steps in dir 1...\n");
@@ -597,7 +657,7 @@ void vMotorControlTask(void *pvParameters) {
             sys_fault_code = FAULT_NONE;
             sys_state = SYS_OPERATIONAL;
             printf("[Motor] Min limit recovery complete.\n");
-            
+
             xLastWakeTime = xTaskGetTickCount(); // reset wake time
             continue;
         }
@@ -623,6 +683,8 @@ void vMotorControlTask(void *pvParameters) {
             // Reset flags and return to operational
             flag_min_limit_hit = false;
             flag_max_limit_hit = false;
+            pending_min_limit_event = false;
+            pending_max_limit_event = false;
             sys_fault_code = FAULT_NONE;
             sys_state = SYS_OPERATIONAL;
             printf("[Motor] Max limit recovery complete.\n");
@@ -634,8 +696,8 @@ void vMotorControlTask(void *pvParameters) {
         // 2. Coleta de Comandos do Core 1
         if (xQueueReceive(xMotorCmdQueue, &current_cmd, 0) == pdTRUE) {
             mctl_state = (MotorControlState_t)current_cmd.cmd_type;
+            printf("estou trocando o mctl_state para %d\n", mctl_state);
             diag.motor_cmd_queued++;
-            
             set_target_pot_value(current_cmd.target_pot);
             
             if (vbs_should_log(1)) {
@@ -656,7 +718,10 @@ void vMotorControlTask(void *pvParameters) {
         // Update current geometry representations
         currentPistonPosition = (int16_t)potToPistonPos(current_val);
         currentVolume = pistonPosToVolume(potToPistonPos(current_val));
-        
+
+        printf("[Motor] mctl_state: %d, current pot: %d, piston pos: %.2f mm, volume: %.2f cm^3\n",
+               mctl_state, current_val, currentPistonPosition / 100.0f, currentVolume);
+
         // 4. Cálculo da Malha de Controle
         if (mctl_state == MCTL_MOVING_UNTIL_POT || mctl_state == MCTL_MOVING_ABSOLUTE) {
             uint16_t target = get_target_pot_value();
@@ -684,6 +749,8 @@ void vMotorControlTask(void *pvParameters) {
                 }
             }
         } else if (mctl_state == MCTL_MOVING_PULSES) {
+            printf("Cheguei aqui\n");
+            printf("[Motor] Pulses remaining: %lu, direction: %d\n", (unsigned long)current_cmd.pulses, current_cmd.direction);
             if (current_cmd.pulses == 0) {
                 mctl_state = MCTL_IDLE;
                 diag.motor_move_complete++;
@@ -692,10 +759,11 @@ void vMotorControlTask(void *pvParameters) {
                 if (chunk > 500) {
                     chunk = 500;
                 }
-                
+                printf("[Motor] Sending chunk of %lu pulses in direction %d\n", (unsigned long)chunk, current_cmd.direction);
                 // Double check flags before executing PIO
                 if (!flag_min_limit_hit && !flag_max_limit_hit) {
-                    gpio_put(PIN_MOTOR_DIR, current_cmd.direction);
+                    gpio_put(PIN_MOTOR_DIR, !current_cmd.direction);
+                    printf("Enviando %lu pulses na direcao %d\n", (unsigned long)chunk, current_cmd.direction);
                     send_stepper_pulses(chunk);
                     wait_stepper_done();
                     
@@ -1172,7 +1240,6 @@ void vFaultManagerTask(void *pvParameters) {
     (void)pvParameters;
     
     // Configure limit switches on Core 1
-    setup_limit_switches_on_core1();
     if (vbs_should_log(5)) printf("[FaultMgr] Limit switch interrupts configured on Core 1\n");
     
     if (vbs_should_log(5)) printf("[FaultMgr] Task started on Core 1\n");
@@ -1188,20 +1255,20 @@ void vFaultManagerTask(void *pvParameters) {
         
         // Check for PC timeout (300 seconds)
         uint32_t time_since_heartbeat = now_ms - last_pc_heartbeat_ms;
-        if (time_since_heartbeat > PC_TIMEOUT_MS) {
-            if (sys_state == SYS_OPERATIONAL) {
-                printf("[FaultMgr] PC timeout (>%lu ms) → FAILSAFE_ASCENT\n", (unsigned long)PC_TIMEOUT_MS);
-                sys_state = SYS_FAILSAFE_ASCENT;
-                sys_fault_code = FAULT_PC_TIMEOUT;
-                diag.fault_count[FAULT_PC_TIMEOUT]++;
+        // if (time_since_heartbeat > PC_TIMEOUT_MS) {
+            // if (sys_state == SYS_OPERATIONAL) {
+            //     printf("[FaultMgr] PC timeout (>%lu ms) → FAILSAFE_ASCENT\n", (unsigned long)PC_TIMEOUT_MS);
+            //     sys_state = SYS_FAILSAFE_ASCENT;
+            //     sys_fault_code = FAULT_PC_TIMEOUT;
+            //     diag.fault_count[FAULT_PC_TIMEOUT]++;
                 
-                // Queue auto-expand command
-                MotorCmd_t failsafe_cmd = {0};
-                failsafe_cmd.cmd_type = MCTL_MOVING_UNTIL_POT;
-                failsafe_cmd.target_pot = MAXIMUM_THRESHOLD;
-                xQueueSend(xMotorCmdQueue, &failsafe_cmd, 0);
-            }
-        }
+            //     // Queue auto-expand command
+            //     MotorCmd_t failsafe_cmd = {0};
+            //     failsafe_cmd.cmd_type = MCTL_MOVING_UNTIL_POT;
+            //     failsafe_cmd.target_pot = MAXIMUM_THRESHOLD;
+            //     xQueueSend(xMotorCmdQueue, &failsafe_cmd, 0);
+            // }
+        //}
         
         // Kick watchdog every ~100ms
         watchdog_update();
@@ -1262,6 +1329,9 @@ void initializeHardware(void) {
     // Initialize hardware sync spinlocks
     initialize_hardware_sync();
     printf("[HW] Hardware synchronization spinlocks initialized\n");
+    
+    //setup limit switch
+    setup_limit_switches_on_core1();
     
     // Setup Stepper Motor PIO (using GPIO4 for PUL and GPIO5 for DIR)
     setup_stepper_pio();
@@ -1377,6 +1447,8 @@ void initializeRTOS(void) {
 
 int main(void) {
     initializeHardware();
+    sleep_ms(1000);
+
     initializeRTOS();
     
     printf("Starting FreeRTOS scheduler...\n");
