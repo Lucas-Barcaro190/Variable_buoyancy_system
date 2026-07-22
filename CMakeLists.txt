@@ -35,7 +35,14 @@ pico_sdk_init()
 
 # Add executable. Default name is the project name. Building v2 refactor for testing
 
-add_executable(vbs_cpp_portugal alteracao_manual.cpp)
+add_executable(vbs_cpp_portugal
+    src/main.cpp
+    src/core/shared_state.cpp
+    src/motor/motor_control.cpp
+    src/comms/protocol.cpp
+    src/tasks/task_handlers.cpp
+    src/init/init.cpp
+)
 
 pico_set_program_name(vbs_cpp_portugal "vbs_cpp_portugal")
 pico_set_program_version(vbs_cpp_portugal "0.2")
