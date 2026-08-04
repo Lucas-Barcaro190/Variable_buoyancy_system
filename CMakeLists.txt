@@ -6,6 +6,7 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+
 # Initialise pico_sdk from installed location
 # (note this can come from environment, CMake cache etc)
 
@@ -39,6 +40,8 @@ add_executable(vbs_cpp_portugal
     src/main.cpp
     src/core/shared_state.cpp
     src/motor/motor_control.cpp
+    src/motor/velocity_generator.cpp
+    src/motor/potentiometer_reading.cpp
     src/comms/protocol.cpp
     src/tasks/task_handlers.cpp
     src/init/init.cpp
@@ -48,6 +51,7 @@ pico_set_program_name(vbs_cpp_portugal "vbs_cpp_portugal")
 pico_set_program_version(vbs_cpp_portugal "0.2")
 
 # Modify the below lines to enable/disable output over UART/USB
+# USB CDC is enabled so the Raspberry Pi Pico serial monitor can connect after flashing.
 pico_enable_stdio_uart(vbs_cpp_portugal 0)
 pico_enable_stdio_usb(vbs_cpp_portugal 1)
 
@@ -57,6 +61,7 @@ include(C:/VBS/FreeRTOS-Kernel/portable/ThirdParty/GCC/RP2040/FreeRTOS_Kernel_im
 
 # Add the standard library to the build
 pico_generate_pio_header(vbs_cpp_portugal ${CMAKE_CURRENT_LIST_DIR}/stepper_pulse.pio)
+pico_generate_pio_header(vbs_cpp_portugal ${CMAKE_CURRENT_LIST_DIR}/src/motor/pwm_pio.pio)
 
 target_link_libraries(vbs_cpp_portugal
     pico_stdlib
@@ -71,6 +76,8 @@ target_link_libraries(vbs_cpp_portugal
     FreeRTOS-Kernel            # O Kernel base
     FreeRTOS-Kernel-Heap4      # Gerenciamento de memória
 )
+
+target_link_options(vbs_cpp_portugal PRIVATE -Wl,--wrap=spin_lock_blocking)
 # Add the standard include files to the build
 target_include_directories(vbs_cpp_portugal PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}
@@ -78,3 +85,11 @@ target_include_directories(vbs_cpp_portugal PRIVATE
 )
 
 pico_add_extra_outputs(vbs_cpp_portugal)
+
+# Test executable for UART & USB CDC verification
+add_executable(helloworld src/helloworld.cpp)
+pico_set_program_name(helloworld "helloworld")
+pico_enable_stdio_uart(helloworld 0)
+pico_enable_stdio_usb(helloworld 1)
+target_link_libraries(helloworld pico_stdlib hardware_uart)
+pico_add_extra_outputs(helloworld)

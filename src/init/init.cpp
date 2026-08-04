@@ -5,6 +5,7 @@
 #include "hardware/gpio.h"
 #include "hardware/watchdog.h"
 #include "hardware/sync.h"
+#include "pico/mutex.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include "queue.h"
@@ -14,15 +15,38 @@
 #include "src/motor/motor_control.h"
 #include "src/tasks/task_handlers.h"
 
+extern "C" {
+    uint32_t __real_spin_lock_blocking(spin_lock_t *lock);
+    uint32_t __wrap_spin_lock_blocking(spin_lock_t *lock) {
+        if (!lock) {
+            static uint32_t dummy_spinlock_wrap = 0xFFFFFFFF;
+            lock = (spin_lock_t *)&dummy_spinlock_wrap;
+        }
+        return __real_spin_lock_blocking(lock);
+    }
+}
+
 void initialize_hardware_sync(void) {
-    vbs_shared_lock = spin_lock_init(VBS_SPINLOCK_ID);
+    static uint32_t dummy_spinlock = 0xFFFFFFFF;
+    vbs_shared_lock = (spin_lock_t *)&dummy_spinlock;
+}
+
+extern "C" {
+    extern mutex_t __mutex_array_start;
+    extern mutex_t __mutex_array_end;
 }
 
 void initializeHardware(void) {
+    spin_locks_reset();
+    mutex_t *start = &__mutex_array_start;
+    mutex_t *end = &__mutex_array_end;
+    for (mutex_t *m = start; m < end; m++) {
+        mutex_init(m);
+    }
     stdio_init_all();
     sleep_ms(2000);
 
-    printf("\n=== VBS v2.0 Hardware Initialization ===\n");
+    printf("\n=== VBS v3.0 Hardware Initialization ===\n");
     initialize_hardware_sync();
     printf("[HW] Hardware synchronization spinlocks initialized\n");
 
@@ -67,8 +91,8 @@ void initializeRTOS(void) {
         printf("[RTOS] ERROR: Failed to create vMotorControlTask\n");
         return;
     }
-    vTaskCoreAffinitySet(xMotorControlTaskHandle, (1 << 0));
-    printf("[RTOS] vMotorControlTask created statically on Core 0 (priority 6)\n");
+    vTaskCoreAffinitySet(xMotorControlTaskHandle, (1 << 0) | (1 << 1));
+    printf("[RTOS] vMotorControlTask created statically (priority 6)\n");
 
     xParserTaskHandle = xTaskCreateStatic(
         vParserTask,
@@ -83,8 +107,8 @@ void initializeRTOS(void) {
         printf("[RTOS] ERROR: Failed to create vParserTask\n");
         return;
     }
-    vTaskCoreAffinitySet(xParserTaskHandle, (1 << 1));
-    printf("[RTOS] vParserTask created statically on Core 1 (priority 4)\n");
+    vTaskCoreAffinitySet(xParserTaskHandle, (1 << 0) | (1 << 1));
+    printf("[RTOS] vParserTask created statically (priority 4)\n");
 
     xFaultMgrTaskHandle = xTaskCreateStatic(
         vFaultManagerTask,
@@ -99,8 +123,8 @@ void initializeRTOS(void) {
         printf("[RTOS] ERROR: Failed to create vFaultManagerTask\n");
         return;
     }
-    vTaskCoreAffinitySet(xFaultMgrTaskHandle, (1 << 1));
-    printf("[RTOS] vFaultManagerTask created statically on Core 1 (priority 3)\n");
+    vTaskCoreAffinitySet(xFaultMgrTaskHandle, (1 << 0) | (1 << 1));
+    printf("[RTOS] vFaultManagerTask created statically (priority 3)\n");
 
     xDiagnosticsTaskHandle = xTaskCreateStatic(
         vDiagnosticsTask,
@@ -115,8 +139,8 @@ void initializeRTOS(void) {
         printf("[RTOS] ERROR: Failed to create vDiagnosticsTask\n");
         return;
     }
-    vTaskCoreAffinitySet(xDiagnosticsTaskHandle, (1 << 1));
-    printf("[RTOS] vDiagnosticsTask created statically on Core 1 (priority 1)\n");
+    vTaskCoreAffinitySet(xDiagnosticsTaskHandle, (1 << 0) | (1 << 1));
+    printf("[RTOS] vDiagnosticsTask created statically (priority 1)\n");
 
     printf("=== RTOS Initialization Complete ===\n\n");
     last_pc_heartbeat_ms = xTaskGetTickCount();

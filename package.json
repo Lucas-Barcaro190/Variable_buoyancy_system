@@ -1,0 +1,24 @@
+{
+  "name": "variable_buoyancy_system",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Lucas-Barcaro190/Variable_buoyancy_system.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Lucas-Barcaro190/Variable_buoyancy_system/issues"
+  },
+  "homepage": "https://github.com/Lucas-Barcaro190/Variable_buoyancy_system#readme",
+  "dependencies": {
+    "rp2040js": "^1.3.3"
+  }
+}

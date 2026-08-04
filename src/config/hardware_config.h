@@ -18,12 +18,12 @@
 #define MAXIMUM_THRESHOLD           435
 #define POT_RANGE                   ((float)(MAXIMUM_THRESHOLD - MINIMAL_THRESHOLD))
 #define PC_TIMEOUT_MS               300000
-#define RECOMMENDED_SPEED_VAL       32
-#define MAX_SPEED_VAL               127
+#define RECOMMENDED_SPEED_VAL       250  // in RPM
+#define MAX_SPEED_VAL               300  // in RPM
 #define MAX_PISTON_POSITION         23.0f
-#define MAX_VOLUME                  300.0f
-#define MAX_PULSES                  200.f * 2.f * 61.417f * 23.f / 3.f
-#define VOL_MULTIPLIER              (3.1415f * (14.0f / 2.0f) * (14.0f / 2.0f))
+#define MAX_VOLUME                  350.0f
+#define MAX_PULSES                  200.f * 2.f * 61.417f * 23.f / 3.f          //188477 steps
+#define VOL_MULTIPLIER              (3.1415f * (14.0f / 2.0f) * (14.0f / 2.0f)) // pi * (D/2)^2 [mm]^2
 #define PISTON_RANGE                (2.0f * MAX_PISTON_POSITION)
 
 // RTOS sizing

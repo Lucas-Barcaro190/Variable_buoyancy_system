@@ -1,0 +1,20 @@
+// vbs_pico.repl - Renode platform description for VBS RP2040 simulation
+// Extends standard Raspberry Pi Pico hardware definition from Renode_RP2040
+
+using "boards/raspberry_pico.repl"
+
+// VBS GPIO Pin Mapping & Peripherals Documentation:
+// GPIO 0 : UART0 TX (Connected to Host Terminal / TCP Socket Server)
+// GPIO 1 : UART0 RX (Connected to Host Terminal / TCP Socket Server)
+// GPIO 2 : SW_MAX_LIMIT (Active LOW limit switch - Extended stop)
+// GPIO 3 : SW_MIN_LIMIT (Active LOW limit switch - Retracted stop)
+// GPIO 4 : PIN_MOTOR_PULSE (Stepper Motor Step pulse output from PIO / PWM)
+// GPIO 5 : PIN_MOTOR_DIR (Stepper Motor Direction signal: 0 = Retract, 1 = Extend)
+// GPIO 12: PIN_ENABLE_DRIVER (Active LOW Stepper Driver Enable)
+// GPIO 26: POT_ADC_PIN (ADC Channel 0 - Potentiometer Position Feedback)
+
+// Optional LED indicator (Pico onboard LED on GPIO 25)
+gpio:
+    25 -> led0@0
+
+led0: Miscellaneous.LED @ gpio 25

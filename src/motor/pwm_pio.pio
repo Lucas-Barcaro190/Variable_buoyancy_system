@@ -1,0 +1,17 @@
+.program stepper_variable
+
+.wrap_target
+    set pins, 0            ; ensure the pulse pin starts low
+
+    pull noblock           ; pull new delay value from FIFO, keep last if empty
+    mov x, osr             ; copy delay value to X
+    set pins, 1            ; drive pulse high
+lp_high:
+    jmp x-- lp_high        ; hold high for X cycles
+
+    pull noblock           ; pull next delay value from FIFO
+    mov x, osr             ; copy delay value to X
+    set pins, 0            ; drive pulse low
+lp_low:
+    jmp x-- lp_low         ; hold low for X cycles
+.wrap

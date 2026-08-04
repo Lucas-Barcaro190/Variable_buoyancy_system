@@ -1,0 +1,41 @@
+# vbs_simulation.resc - Renode Script for VBS RP2040 Simulation
+# Run with: renode renode/vbs_simulation.resc
+
+$name?="raspberry_pico"
+$bin?=@build/vbs_cpp_portugal.elf
+
+# Include Renode_RP2040 peripheral support models (source mode - dynamically compiles C# peripherals)
+path add @renode
+path add @renode/Renode_RP2040
+$machine_name?="raspberry_pico"
+include @renode/Renode_RP2040/cores/initialize_peripherals_source.resc
+
+# Load custom VBS board description
+mach set $name
+machine LoadPlatformDescription @renode/vbs_pico.repl
+sysbus LoadELF @renode/Renode_RP2040/bootroms/rp2040/b2.elf
+
+# Set timing quantum for precise peripheral synchronization
+emulation SetGlobalQuantum "0.0001"
+
+# Load compiled FreeRTOS C++ ELF firmware
+sysbus LoadELF $bin
+sysbus.cpu0 VectorTableOffset 0x10000100
+sysbus.cpu1 VectorTableOffset 0x10000100
+
+# Create TCP Terminal Server on UART0 for Python CLI / socket bridge (Port 4321)
+emulation CreateServerSocketTerminal 4321 "uart_server" false
+connector Connect sysbus.uart0 uart_server
+
+# Set initial potentiometer ADC Channel 0 voltage to 1.5408V (raw 9-bit pot value = 239)
+sysbus.adc SetDefaultVoltageOnChannel 0 1.5408
+
+# Also display stdout in Renode analyzer terminal
+showAnalyzer sysbus.uart0
+
+echo "VBS Renode Simulation Ready!"
+echo "UART0 exposed on TCP port 4321."
+echo "Use 'py simulation/main.py --mode=renode' to connect."
+
+# Start CPU execution
+start

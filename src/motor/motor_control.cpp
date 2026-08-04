@@ -6,83 +6,133 @@
 #include "hardware/gpio.h"
 #include "hardware/pio.h"
 #include "hardware/adc.h"
-#include "stepper_pulse.pio.h"
+#include "pwm_pio.pio.h"
 #include "FreeRTOS.h"
 #include "task.h"
 
 static PIO stepper_pio = pio0;
 static uint stepper_sm = 0;
 static uint stepper_offset = 0;
+static float pio_clkdiv = 125.0f; // 125 MHz / 125 = 1 MHz PIO clock
 
-static inline float clampf(float v, float min, float max) {
-    return (v < min) ? min : ((v > max) ? max : v);
+// Inicialização do PID
+void pid_init(PIDController_t *pid, float Kp, float Ki, float Kd, float out_min, float out_max) {
+    if (!pid) return;
+    pid->Kp = Kp;
+    pid->Ki = Ki;
+    pid->Kd = Kd;
+    pid->integral = 0.0f;
+    pid->prev_error = 0.0f;
+    pid->out_min = out_min;
+    pid->out_max = out_max;
 }
 
-static inline uint16_t clamp_u16(uint16_t v, uint16_t min, uint16_t max) {
-    return (v < min) ? min : ((v > max) ? max : v);
+void pid_reset(PIDController_t *pid) {
+    if (!pid) return;
+    pid->integral = 0.0f;
+    pid->prev_error = 0.0f;
 }
 
+// Cálculo do PID discreto
+float pid_compute(PIDController_t *pid, float setpoint, float measurement, float dt) {
+    if (!pid || dt <= 0.0f) return 0.0f;
+
+    float error = setpoint - measurement;
+
+    // Termo Proporcional
+    float P = pid->Kp * error;
+
+    // Termo Integral com anti-windup clamping
+    pid->integral += error * dt;
+    float I = pid->Ki * pid->integral;
+    if (I > pid->out_max) {
+        I = pid->out_max;
+        if (pid->Ki != 0.0f) pid->integral = I / pid->Ki;
+    } else if (I < pid->out_min) {
+        I = pid->out_min;
+        if (pid->Ki != 0.0f) pid->integral = I / pid->Ki;
+    }
+
+    // Termo Derivativo
+    float derivative = (error - pid->prev_error) / dt;
+    float D = pid->Kd * derivative;
+    pid->prev_error = error;
+
+    // Saída total saturada
+    float output = P + I + D;
+    if (output > pid->out_max) output = pid->out_max;
+    if (output < pid->out_min) output = pid->out_min;
+
+    return output;
+}
+
+// Configuração da PIO para PWM contínuo do motor de passo
 void setup_stepper_pio(void) {
-    stepper_offset = pio_add_program(stepper_pio, &stepper_pulse_program);
+    stepper_offset = pio_add_program(stepper_pio, &stepper_variable_program);
     pio_gpio_init(stepper_pio, PIN_MOTOR_PULSE);
 
-    pio_sm_config c = stepper_pulse_program_get_default_config(stepper_offset);
-    sm_config_set_sideset_pins(&c, PIN_MOTOR_PULSE);
-
-    float div = 3676.47f;
-    sm_config_set_clkdiv(&c, div);
+    pio_sm_config c = stepper_variable_program_get_default_config(stepper_offset);
+    sm_config_set_set_pins(&c, PIN_MOTOR_PULSE, 1);
+    sm_config_set_clkdiv(&c, pio_clkdiv);
     sm_config_set_out_shift(&c, true, false, 32);
 
     pio_sm_init(stepper_pio, stepper_sm, stepper_offset, &c);
     pio_sm_set_consecutive_pindirs(stepper_pio, stepper_sm, PIN_MOTOR_PULSE, 1, true);
-    pio_sm_set_enabled(stepper_pio, stepper_sm, true);
+    pio_sm_exec(stepper_pio, stepper_sm, pio_encode_set(pio_pins, 0));
+    pio_sm_set_enabled(stepper_pio, stepper_sm, false);
 
     gpio_init(PIN_MOTOR_DIR);
     gpio_set_dir(PIN_MOTOR_DIR, GPIO_OUT);
     gpio_put(PIN_MOTOR_DIR, 0);
 }
 
-void send_stepper_pulses(uint32_t count) {
-    pio_sm_put_blocking(stepper_pio, stepper_sm, count - 1);
-    printf("[Send stepper pulses] Sending %lu pulses\n", (unsigned long)count);
-}
-
-bool is_stepper_busy(void) {
-    return !pio_sm_is_tx_fifo_empty(stepper_pio, stepper_sm) ||
-           (pio_sm_get_pc(stepper_pio, stepper_sm) != stepper_offset);
-}
-
-void wait_stepper_done(void) {
-    while (is_stepper_busy()) {
-        vTaskDelay(pdMS_TO_TICKS(5));
+void set_stepper_period(uint32_t period_x) {
+    if (period_x == 0) {
+        period_x = 1;
     }
+    pio_sm_set_enabled(stepper_pio, stepper_sm, true);
+    pio_sm_put_blocking(stepper_pio, stepper_sm, period_x);
+    pio_sm_put_blocking(stepper_pio, stepper_sm, period_x);
+}
+
+void set_stepper_speed_mm_s(float speed_mm_s) {
+    float speed_mag = fabsf(speed_mm_s);
+
+    if (speed_mag < 0.0001f) {
+        // Velocidade praticamente nula: para o PWM
+        stop_stepper_pio();
+        return;
+    }
+
+    // Direção
+    gpio_put(PIN_MOTOR_DIR, (speed_mm_s >= 0.0f) ? 0 : 1);
+
+    // Frequência de passos desejada (Hz)
+    float f_step = speed_mag * STEPS_PER_MM;
+
+    if (f_step < 0.1f) {
+        stop_stepper_pio();
+        return;
+    }
+
+    // PIO clock is 1 MHz. Each loop iteration is 1 cycle. The program toggles
+    // the pin once per delay period for the high and low half-cycles.
+    float f_pio = 1000000.0f;
+    float X_float = (f_pio / (2.0f * f_step));
+    if (X_float < 1.0f) X_float = 1.0f;
+    if (X_float > 16777215.0f) X_float = 16777215.0f;
+
+    uint32_t period_x = (uint32_t)X_float;
+    pio_sm_set_enabled(stepper_pio, stepper_sm, true);
+    pio_sm_put(stepper_pio, stepper_sm, period_x);
+    pio_sm_put(stepper_pio, stepper_sm, period_x);
 }
 
 void stop_stepper_pio(void) {
     pio_sm_set_enabled(stepper_pio, stepper_sm, false);
     pio_sm_clear_fifos(stepper_pio, stepper_sm);
     pio_sm_restart(stepper_pio, stepper_sm);
-    pio_sm_exec(stepper_pio, stepper_sm, pio_encode_jmp(stepper_offset));
-    pio_sm_set_enabled(stepper_pio, stepper_sm, true);
-}
-
-float potToPistonPos(uint16_t pot) {
-    pot = clamp_u16(pot, MINIMAL_THRESHOLD, MAXIMUM_THRESHOLD);
-    return (((float)(pot - MINIMAL_THRESHOLD) / POT_RANGE) * PISTON_RANGE) - MAX_PISTON_POSITION;
-}
-
-uint16_t pistonPosToPot(float pos_mm) {
-    pos_mm = clampf(pos_mm, -MAX_PISTON_POSITION, MAX_PISTON_POSITION);
-    float fraction = (pos_mm + MAX_PISTON_POSITION) / PISTON_RANGE;
-    return MINIMAL_THRESHOLD + (uint16_t)(fraction * POT_RANGE);
-}
-
-float pistonPosToVolume(float pos_mm) {
-    return clampf(pos_mm * VOL_MULTIPLIER, -MAX_VOLUME, MAX_VOLUME);
-}
-
-float volumeToPistonPos(float vol_cm3) {
-    return clampf(vol_cm3 / VOL_MULTIPLIER, -MAX_PISTON_POSITION, MAX_PISTON_POSITION);
+    pio_sm_exec(stepper_pio, stepper_sm, pio_encode_set(pio_pins, 0));
 }
 
 void sendStopCommand(void) {

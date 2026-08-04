@@ -6,8 +6,6 @@
 
 int main(void) {
     initializeHardware();
-    sleep_ms(1000);
-
     initializeRTOS();
 
     printf("Starting FreeRTOS scheduler...\n");

@@ -19,7 +19,8 @@ volatile bool pending_max_limit_event = false;
 volatile uint32_t last_min_limit_event_us = 0;
 volatile uint32_t last_max_limit_event_us = 0;
 volatile uint8_t vbsAddress = 0xE0;
-spin_lock_t* vbs_shared_lock = nullptr;
+static uint32_t default_dummy_spinlock_hardware = 0xFFFFFFFF;
+spin_lock_t* vbs_shared_lock = (spin_lock_t*)&default_dummy_spinlock_hardware;
 QueueHandle_t xMotorCmdQueue = NULL;
 TaskHandle_t xMotorControlTaskHandle = NULL;
 TaskHandle_t xParserTaskHandle = NULL;
@@ -62,30 +63,20 @@ const char* faultToString(FaultCode_t fault) {
 }
 
 uint16_t getPotValue(void) {
-    uint32_t flags = spin_lock_blocking(vbs_shared_lock);
-    uint16_t val = potentiometer_value;
-    spin_unlock(vbs_shared_lock, flags);
-    return val;
+    return potentiometer_value;
 }
 
 uint16_t setPotValue(uint16_t val) {
-    uint32_t flags = spin_lock_blocking(vbs_shared_lock);
     potentiometer_value = val;
-    spin_unlock(vbs_shared_lock, flags);
     return val;
 }
 
 uint16_t get_target_pot_value(void) {
-    uint32_t flags = spin_lock_blocking(vbs_shared_lock);
-    uint16_t val = target_pot_shared;
-    spin_unlock(vbs_shared_lock, flags);
-    return val;
+    return target_pot_shared;
 }
 
 void set_target_pot_value(uint16_t val) {
-    uint32_t flags = spin_lock_blocking(vbs_shared_lock);
     target_pot_shared = val;
-    spin_unlock(vbs_shared_lock, flags);
 }
 
 void changeAddress(uint8_t newAddress) {
