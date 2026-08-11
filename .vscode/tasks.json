@@ -23,8 +23,8 @@
             "command": "${env:HOME}/.pico-sdk/picotool/2.2.0-a4/picotool/picotool",
             "args": [
                 "load",
-                "${workspaceFolder}/build/vbs_cpp_portugal.elf",
-                "-fx"
+                "${workspaceFolder}/build/vbs_cpp_portugal.uf2",
+                "-f"
             ],
             "presentation": {
                 "reveal": "always",

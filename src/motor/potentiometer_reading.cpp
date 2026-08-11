@@ -30,13 +30,14 @@ uint16_t read_potentiometer_raw(void) {
 
 float potToPistonPos(uint16_t pot) {
     pot = clamp_u16(pot, MINIMAL_THRESHOLD, MAXIMUM_THRESHOLD);
-    return (((float)(pot - MINIMAL_THRESHOLD) / POT_RANGE) * PISTON_RANGE) - MAX_PISTON_POSITION; // tem algo errado na conta
+    float fraction = 1.0f - ((float)(pot - MINIMAL_THRESHOLD) / POT_RANGE);
+    return (fraction * PISTON_RANGE) - MAX_PISTON_POSITION;
 }
 
 uint16_t pistonPosToPot(float pos_mm) {
     pos_mm = clampf(pos_mm, -MAX_PISTON_POSITION, MAX_PISTON_POSITION);
-    float fraction = (pos_mm + MAX_PISTON_POSITION) / PISTON_RANGE; // tem algo errado na conta
-    return MINIMAL_THRESHOLD + (uint16_t)(fraction * POT_RANGE);
+    float fraction = (pos_mm + MAX_PISTON_POSITION) / PISTON_RANGE;
+    return MAXIMUM_THRESHOLD - (uint16_t)(fraction * POT_RANGE);
 }
 
 float pistonPosToVolume(float pos_mm) {

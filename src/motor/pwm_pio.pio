@@ -3,15 +3,23 @@
 .wrap_target
     set pins, 0            ; ensure the pulse pin starts low
 
-    pull noblock           ; pull new delay value from FIFO, keep last if empty
+    pull block             ; wait for the first delay value from FIFO
     mov x, osr             ; copy delay value to X
+    mov y, x               ; retain the current delay value
+
+loop:
+    mov x, y               ; restore delay for high phase
     set pins, 1            ; drive pulse high
 lp_high:
     jmp x-- lp_high        ; hold high for X cycles
 
-    pull noblock           ; pull next delay value from FIFO
-    mov x, osr             ; copy delay value to X
+    mov x, y               ; restore delay for low phase
     set pins, 0            ; drive pulse low
 lp_low:
     jmp x-- lp_low         ; hold low for X cycles
+
+    pull noblock           ; refresh delay only if a new value is available
+    jmp !osre loop
+    mov y, osr             ; update saved delay only when FIFO had data
+    jmp loop
 .wrap

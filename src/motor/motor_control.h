@@ -44,6 +44,11 @@ void setup_limit_switches_on_core1(void);
 void gpio_limit_switches_callback(uint gpio, uint32_t events);
 void evaluate_pending_limit_switches(void);
 
+// Higher-level motor helpers moved from task handlers
+void treat_fault_limit(MotorControlState_t *mctl_state);
+void potentiometer_movement(VelocityGenerator_t *vel_gen, PIDController_t *pid, float dt, float h_medido, MotorControlState_t *mctl_state);
+void pulses_movement(MotorCmd_t *current_cmd, float dt, MotorControlState_t *mctl_state);
+
 #ifdef __cplusplus
 }
 #endif

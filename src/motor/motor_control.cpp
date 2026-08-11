@@ -13,6 +13,7 @@
 static PIO stepper_pio = pio0;
 static uint stepper_sm = 0;
 static uint stepper_offset = 0;
+static bool stepper_pio_enabled = false;
 static float pio_clkdiv = 125.0f; // 125 MHz / 125 = 1 MHz PIO clock
 
 // Inicialização do PID
@@ -90,8 +91,6 @@ void set_stepper_period(uint32_t period_x) {
     if (period_x == 0) {
         period_x = 1;
     }
-    pio_sm_set_enabled(stepper_pio, stepper_sm, true);
-    pio_sm_put_blocking(stepper_pio, stepper_sm, period_x);
     pio_sm_put_blocking(stepper_pio, stepper_sm, period_x);
 }
 
@@ -99,33 +98,40 @@ void set_stepper_speed_mm_s(float speed_mm_s) {
     float speed_mag = fabsf(speed_mm_s);
 
     if (speed_mag < 0.0001f) {
-        // Velocidade praticamente nula: para o PWM
         stop_stepper_pio();
         return;
     }
 
-    // Direção
-    gpio_put(PIN_MOTOR_DIR, (speed_mm_s >= 0.0f) ? 0 : 1);
+    gpio_put(PIN_MOTOR_DIR, (speed_mm_s >= 0.0f) ? 1 : 0);
 
-    // Frequência de passos desejada (Hz)
     float f_step = speed_mag * STEPS_PER_MM;
-
     if (f_step < 0.1f) {
         stop_stepper_pio();
         return;
     }
 
-    // PIO clock is 1 MHz. Each loop iteration is 1 cycle. The program toggles
-    // the pin once per delay period for the high and low half-cycles.
     float f_pio = 1000000.0f;
     float X_float = (f_pio / (2.0f * f_step));
     if (X_float < 1.0f) X_float = 1.0f;
     if (X_float > 16777215.0f) X_float = 16777215.0f;
-
     uint32_t period_x = (uint32_t)X_float;
-    pio_sm_set_enabled(stepper_pio, stepper_sm, true);
-    pio_sm_put(stepper_pio, stepper_sm, period_x);
-    pio_sm_put(stepper_pio, stepper_sm, period_x);
+
+    if (vbs_should_log(4)) {
+        printf("[Motor] set_stepper_speed_mm_s: speed=%.4f mm/s, f_step=%.2f Hz, period_x=%u, pio_enabled=%u\n",
+               speed_mag, f_step, (unsigned)period_x, (unsigned)stepper_pio_enabled);
+    }
+
+    if (!stepper_pio_enabled) {
+        pio_sm_restart(stepper_pio, stepper_sm);
+        pio_sm_exec(stepper_pio, stepper_sm, pio_encode_set(pio_pins, 0));
+        pio_sm_clear_fifos(stepper_pio, stepper_sm);
+        pio_sm_set_enabled(stepper_pio, stepper_sm, true);
+        stepper_pio_enabled = true;
+    } else {
+        pio_sm_clear_fifos(stepper_pio, stepper_sm);
+    }
+
+    pio_sm_put_blocking(stepper_pio, stepper_sm, period_x);
 }
 
 void stop_stepper_pio(void) {
@@ -133,6 +139,7 @@ void stop_stepper_pio(void) {
     pio_sm_clear_fifos(stepper_pio, stepper_sm);
     pio_sm_restart(stepper_pio, stepper_sm);
     pio_sm_exec(stepper_pio, stepper_sm, pio_encode_set(pio_pins, 0));
+    stepper_pio_enabled = false;
 }
 
 void sendStopCommand(void) {
@@ -164,34 +171,46 @@ void gpio_limit_switches_callback(uint gpio, uint32_t events) {
         return;
     }
 
+    UBaseType_t uxSavedInterruptStatus = taskENTER_CRITICAL_FROM_ISR();
     uint32_t now_us = time_us_32();
-    volatile uint32_t* last_event_us = (gpio == SW_MIN_LIMIT) ? &last_min_limit_event_us : &last_max_limit_event_us;
-    const uint32_t debounce_window_us = 50000;
+    volatile uint32_t *last_event_us = (gpio == SW_MIN_LIMIT) ? &last_min_limit_event_us : &last_max_limit_event_us;
+    const uint32_t debounce_window_us = 4500000; // 4500 ms debounce window -- the full movement takes 4.95 seconds
 
-    if (now_us - *last_event_us < debounce_window_us) {
-        return;
+    if (now_us - *last_event_us >= debounce_window_us) {
+        if (gpio == SW_MIN_LIMIT) {
+            if (!pending_min_limit_event && !flag_min_limit_hit) {
+                *last_event_us = now_us;
+                pending_min_limit_event = true;
+                if (vbs_should_log(5)) printf("[Motor DBG] gpio_limit_switches_callback: MIN pending at %lu us\n", (unsigned long)now_us);
+            }
+        } else if (gpio == SW_MAX_LIMIT) {
+            if (!pending_max_limit_event && !flag_max_limit_hit) {
+                *last_event_us = now_us;
+                pending_max_limit_event = true;
+                if (vbs_should_log(5)) printf("[Motor DBG] gpio_limit_switches_callback: MAX pending at %lu us\n", (unsigned long)now_us);
+            }
+        }
+    } else {
+        if (vbs_should_log(5)) printf("[Motor DBG] gpio_limit_switches_callback: ignored bounce on pin %u at %lu us\n", gpio, (unsigned long)now_us);
     }
-    *last_event_us = now_us;
 
-    if (gpio == SW_MIN_LIMIT) {
-        pending_min_limit_event = true;
-    } else if (gpio == SW_MAX_LIMIT) {
-        pending_max_limit_event = true;
-    }
+    taskEXIT_CRITICAL_FROM_ISR(uxSavedInterruptStatus);
 }
 
 void evaluate_pending_limit_switches(void) {
     if (pending_min_limit_event) {
         pending_min_limit_event = false;
-        if (!gpio_get(SW_MIN_LIMIT) && (time_us_32() - last_min_limit_event_us) > 20000) {
+        if (!gpio_get(SW_MIN_LIMIT)) {
             flag_min_limit_hit = true;
+            if (vbs_should_log(2)) printf("[Motor] evaluate_pending_limit_switches: MIN confirmed\n");
         }
     }
 
     if (pending_max_limit_event) {
         pending_max_limit_event = false;
-        if (!gpio_get(SW_MAX_LIMIT) && (time_us_32() - last_max_limit_event_us) > 20000) {
+        if (!gpio_get(SW_MAX_LIMIT)) {
             flag_max_limit_hit = true;
+            if (vbs_should_log(2)) printf("[Motor] evaluate_pending_limit_switches: MAX confirmed\n");
         }
     }
 }
@@ -212,11 +231,147 @@ void setup_limit_switches_on_core1(void) {
     gpio_set_input_hysteresis_enabled(SW_MAX_LIMIT, true);
 
     gpio_set_irq_enabled_with_callback(SW_MIN_LIMIT, GPIO_IRQ_EDGE_FALL, false, &gpio_limit_switches_callback);
-    gpio_set_irq_enabled(SW_MAX_LIMIT, GPIO_IRQ_EDGE_FALL, false);
+    gpio_set_irq_enabled_with_callback(SW_MAX_LIMIT, GPIO_IRQ_EDGE_FALL, false, &gpio_limit_switches_callback);
 
     busy_wait_ms(250);
 
     gpio_set_irq_enabled_with_callback(SW_MIN_LIMIT, GPIO_IRQ_EDGE_FALL, true, &gpio_limit_switches_callback);
-    gpio_set_irq_enabled(SW_MAX_LIMIT, GPIO_IRQ_EDGE_FALL, true);
+    gpio_set_irq_enabled_with_callback(SW_MAX_LIMIT, GPIO_IRQ_EDGE_FALL, true, &gpio_limit_switches_callback);
     limit_switches_ready = true;
+}
+
+// Unified treatment for limit switch faults. Called from vMotorControlTask.
+void treat_fault_limit(MotorControlState_t *mctl_state) {
+    if (flag_min_limit_hit) {
+        printf("[Motor] **CRITICAL** Min limit switch hit! Recovering by queuing move 8188 steps (+1 direction)...\n");
+        sys_state = SYS_CRITICAL_ERROR;
+        sys_fault_code = FAULT_MIN_LIMIT_HIT;
+        diag.fault_count[FAULT_MIN_LIMIT_HIT]++;
+        stop_stepper_pio();
+        xQueueReset(xMotorCmdQueue);
+        if (mctl_state) *mctl_state = MCTL_IDLE;
+
+        MotorCmd_t cmd = {0};
+        cmd.cmd_type = MCTL_MOVING_PULSES;
+        cmd.pulses = 8188;
+        cmd.direction = 0;
+        xQueueSend(xMotorCmdQueue, &cmd, portMAX_DELAY);
+
+        flag_min_limit_hit = false;
+        flag_max_limit_hit = false;
+        pending_min_limit_event = false;
+        pending_max_limit_event = false;
+        sys_fault_code = FAULT_NONE;
+        sys_state = SYS_OPERATIONAL;
+        printf("[Motor] Min limit recovery queued: 8188 pulses.\n");
+    } else if (flag_max_limit_hit) {
+        printf("[Motor] **CRITICAL** Max limit switch hit! Recovering by queuing move 8188 steps (-1 direction)...\n");
+        sys_state = SYS_CRITICAL_ERROR;
+        sys_fault_code = FAULT_MAX_LIMIT_HIT;
+        diag.fault_count[FAULT_MAX_LIMIT_HIT]++;
+        stop_stepper_pio();
+        xQueueReset(xMotorCmdQueue);
+        if (mctl_state) *mctl_state = MCTL_IDLE;
+
+        MotorCmd_t cmd = {0};
+        cmd.cmd_type = MCTL_MOVING_PULSES;
+        cmd.pulses = 8188;
+        cmd.direction = 1;
+        xQueueSend(xMotorCmdQueue, &cmd, portMAX_DELAY);
+
+        flag_min_limit_hit = false;
+        flag_max_limit_hit = false;
+        pending_min_limit_event = false;
+        pending_max_limit_event = false;
+        sys_fault_code = FAULT_NONE;
+        sys_state = SYS_OPERATIONAL;
+        printf("[Motor] Max limit recovery queued: 8188 pulses.\n");
+    }
+}
+
+// Handle potentiometer-based movement (MCTL_MOVING_UNTIL_POT or MCTL_MOVING_ABSOLUTE)
+void potentiometer_movement(VelocityGenerator_t *vel_gen, PIDController_t *pid, float dt, float h_medido, MotorControlState_t *mctl_state) {
+    float now_sec = (float)xTaskGetTickCount() * (1.0f / configTICK_RATE_HZ);
+    TrajectoryPoint_t traj = velocity_generator_update(vel_gen, now_sec);
+    float pos_error = traj.href - h_medido;
+
+    if (traj.is_completed && fabsf(pos_error) < 0.2f) {
+        stop_stepper_pio();
+        if (mctl_state) *mctl_state = MCTL_IDLE;
+        diag.motor_move_complete++;
+        printf("[Motor] Target reached! h_medido=%.2f mm, error=%.2f mm\n", h_medido, pos_error);
+    } else {
+        float v_control = pid_compute(pid, traj.href, h_medido, dt);
+        //printf("[Motor DBG] pid: traj_href=%.3f h_medido=%.3f error=%.3f v_control=%.6f\n",
+        //       traj.href, h_medido, pos_error, v_control);
+        set_stepper_speed_mm_s(v_control);
+    }
+}
+
+// Handle pulse-count based movement (MCTL_MOVING_PULSES)
+void pulses_movement(MotorCmd_t *current_cmd, float dt, MotorControlState_t *mctl_state) {
+    static uint32_t pulses_total_init = 0;
+    static uint32_t pulses_accel = 0;
+    static uint32_t pulses_decel = 0;
+    static bool pulses_profile_initialized = false;
+
+    if (!current_cmd) return;
+
+    if (current_cmd->pulses == 0) {
+        stop_stepper_pio();
+        if (mctl_state) *mctl_state = MCTL_IDLE;
+        diag.motor_move_complete++;
+        pulses_profile_initialized = false;
+        if (vbs_should_log(4)) printf("[Motor] Pulse movement complete\n");
+        return;
+    }
+
+    if (!pulses_profile_initialized) {
+        pulses_total_init = current_cmd->pulses;
+        pulses_accel = (uint32_t)ceilf((float)pulses_total_init * 0.10f);
+        if (pulses_accel > 4000) pulses_accel = 4000;
+        pulses_decel = pulses_accel;
+        if (pulses_accel + pulses_decel > pulses_total_init) {
+            pulses_accel = pulses_total_init / 2;
+            pulses_decel = pulses_total_init - pulses_accel;
+        }
+        pulses_profile_initialized = true;
+        if (vbs_should_log(4)) printf("[Motor] Pulse profile init: total=%lu accel=%lu decel=%lu\n",
+                                    (unsigned long)pulses_total_init, (unsigned long)pulses_accel, (unsigned long)pulses_decel);
+    }
+
+    uint32_t pulses_remaining = current_cmd->pulses;
+    if (vbs_should_log(4)) printf("[Motor] Pulse movement tick: remaining=%lu\n", (unsigned long)pulses_remaining);
+
+    float base_vmax = (current_cmd->speed > 0) ? MOTOR_RPM_TO_MM_S(current_cmd->speed) : DEFAULT_VMAX_MM_S;
+    float speed = base_vmax;
+    float f_step = fabsf(speed) * STEPS_PER_MM;
+    if (vbs_should_log(4)) printf("[Motor] Pulse movement: speed=%.4f mm/s, f_step=%.2f Hz, steps_this_tick=%.4f\n",
+           speed, f_step, fabsf(speed) * STEPS_PER_MM * dt);
+    set_stepper_speed_mm_s((current_cmd->direction == 0) ? speed : -speed);
+
+    float steps_this_tick = fabsf(speed) * STEPS_PER_MM * dt;
+    uint32_t consumed_steps = (uint32_t)steps_this_tick;
+    if (consumed_steps == 0) consumed_steps = 1;
+
+    if (current_cmd->pulses <= consumed_steps) {
+        float final_pulses = (float)current_cmd->pulses;
+        float final_time_s = final_pulses / f_step;
+        uint32_t wait_us = (uint32_t)ceilf(final_time_s * 1000000.0f);
+        if (wait_us > 0) {
+            if (vbs_should_log(4)) printf("[Motor] Waiting %.3f ms for final %.0f pulses\n", wait_us / 1000.0f, final_pulses);
+            busy_wait_us(wait_us);
+        }
+
+        current_cmd->pulses = 0;
+        if (mctl_state) *mctl_state = MCTL_IDLE;
+        stop_stepper_pio();
+        diag.motor_move_complete++;
+        pulses_profile_initialized = false;
+        if (vbs_should_log(4)) printf("[Motor] Pulse movement finished after final consumption\n");
+    } else {
+        current_cmd->pulses -= consumed_steps;
+        if (vbs_should_log(4)) printf("[Motor] Pulse movement consumed=%lu new_remaining=%lu\n",
+               (unsigned long)consumed_steps, (unsigned long)current_cmd->pulses);
+    }
 }

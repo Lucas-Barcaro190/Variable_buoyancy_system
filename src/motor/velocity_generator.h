@@ -8,7 +8,8 @@ extern "C" {
 #endif
 
 #define VELOCITY_DEADBAND_MM      0.15f   // Zona morta de 0.15 mm
-#define DEFAULT_VMAX_MM_S         2.0353f // Velocidade máxima (mm/s)
+#include "src/config/hardware_config.h"
+#define DEFAULT_VMAX_MM_S         MOTOR_RPM_TO_MM_S(RECOMMENDED_SPEED_VAL) // Default speed at 250 RPM
 #define DEFAULT_ACCEL_TIME_S      3.0f    // Rampa de aceleração entre 2s e 5s
 
 typedef struct {

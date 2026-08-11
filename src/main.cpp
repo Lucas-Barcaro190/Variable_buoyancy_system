@@ -7,7 +7,7 @@
 int main(void) {
     initializeHardware();
     initializeRTOS();
-
+    //sleep_ms(2000); // Aguarda 2 segundos para estabilizar o sistema antes de iniciar o scheduler
     printf("Starting FreeRTOS scheduler...\n");
     vTaskStartScheduler();
 

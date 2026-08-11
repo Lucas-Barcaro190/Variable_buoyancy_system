@@ -87,9 +87,9 @@ target_include_directories(vbs_cpp_portugal PRIVATE
 pico_add_extra_outputs(vbs_cpp_portugal)
 
 # Test executable for UART & USB CDC verification
-add_executable(helloworld src/helloworld.cpp)
-pico_set_program_name(helloworld "helloworld")
-pico_enable_stdio_uart(helloworld 0)
-pico_enable_stdio_usb(helloworld 1)
-target_link_libraries(helloworld pico_stdlib hardware_uart)
-pico_add_extra_outputs(helloworld)
+#add_executable(helloworld src/helloworld.cpp)
+#pico_set_program_name(helloworld "helloworld")
+#pico_enable_stdio_uart(helloworld 0)
+#pico_enable_stdio_usb(helloworld 1)
+#target_link_libraries(helloworld pico_stdlib hardware_uart)
+#pico_add_extra_outputs(helloworld)

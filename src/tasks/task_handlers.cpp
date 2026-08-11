@@ -131,6 +131,68 @@ static const cmd_entry_t cmd_table[] = {
 
 #define NUM_COMMANDS (sizeof(cmd_table) / sizeof(cmd_table[0]))
 
+// Process a completed ASCII line (commands like 'help', 'diag', 'move N', 'move_pot P')
+static void process_ascii_line(char *line_buffer, int *line_idx, size_t *rx_len) {
+    if (*line_idx > 0) {
+        line_buffer[*line_idx] = '\0';
+
+        last_pc_heartbeat_ms = xTaskGetTickCount();
+        diag.pc_heartbeats++;
+
+        if (vbs_should_log(3) || vbs_should_log(6)) printf("\n[Parser] Received: '%s'\n", line_buffer);
+
+        char *cmd = strtok(line_buffer, " \t");
+        if (cmd != NULL) {
+            for (char *p = cmd; *p; ++p) *p = tolower((unsigned char)*p);
+
+            bool found = false;
+            for (size_t i = 0; i < NUM_COMMANDS; i++) {
+                if (strcmp(cmd, cmd_table[i].name) == 0) {
+                    cmd_table[i].handler();
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                printf("Unknown command: '%s'\n", cmd);
+            }
+        }
+
+        *line_idx = 0;
+        *rx_len = 0;
+    }
+    printf("> ");
+    fflush(stdout);
+}
+
+// Process binary/non-ASCII stream in rx_buf.
+static void process_binary_stream(uint8_t *rx_buf, size_t *rx_len) {
+    while (*rx_len >= 4) {
+        uint8_t expected_addr = getAddress();
+        if (rx_buf[1] == expected_addr) {
+            uint8_t payload_size = rx_buf[2];
+            if (payload_size <= 4) {
+                size_t expected_packet_len = 4 + payload_size;
+                if (*rx_len >= expected_packet_len) {
+                    uint8_t calculated_crc = calculateCRC8Bluetooth(&rx_buf[1], expected_packet_len - 1);
+                    uint8_t received_crc = rx_buf[0];
+
+                    if (calculated_crc == received_crc) {
+                        handle_binary_command(rx_buf[3], &rx_buf[4], payload_size);
+                        memmove(rx_buf, rx_buf + expected_packet_len, *rx_len - expected_packet_len);
+                        *rx_len -= expected_packet_len;
+                        continue;
+                    }
+                } else {
+                    break;
+                }
+            }
+        }
+        memmove(rx_buf, rx_buf + 1, *rx_len - 1);
+        (*rx_len)--;
+    }
+}
+
 void vMotorControlTask(void *pvParameters) {
     (void)pvParameters;
     potentiometer_init();
@@ -152,53 +214,15 @@ void vMotorControlTask(void *pvParameters) {
 
     for (;;) {
         evaluate_pending_limit_switches();
-
-        if (flag_min_limit_hit) {
-            printf("[Motor] **CRITICAL** Min limit switch hit! Recovering by moving 8189 steps (+1 direction)...\n");
-            sys_state = SYS_CRITICAL_ERROR;
-            sys_fault_code = FAULT_MIN_LIMIT_HIT;
-            diag.fault_count[FAULT_MIN_LIMIT_HIT]++;
-            stop_stepper_pio();
-            xQueueReset(xMotorCmdQueue);
-            mctl_state = MCTL_IDLE;
-            set_stepper_speed_mm_s(DEFAULT_VMAX_MM_S);
-            uint32_t move_ticks = pdMS_TO_TICKS((uint32_t)((8189.0f / STEPS_PER_MM) / DEFAULT_VMAX_MM_S * 1000.0f));
-            vTaskDelay(move_ticks);
-            stop_stepper_pio();
-            flag_min_limit_hit = false;
-            flag_max_limit_hit = false;
-            sys_fault_code = FAULT_NONE;
-            sys_state = SYS_OPERATIONAL;
-            printf("[Motor] Min limit recovery complete (moved 8189 steps).\n");
-            xLastWakeTime = xTaskGetTickCount();
-            continue;
-        }
-
-        if (flag_max_limit_hit) {
-            printf("[Motor] **CRITICAL** Max limit switch hit! Recovering by moving 8189 steps (-1 direction)...\n");
-            sys_state = SYS_CRITICAL_ERROR;
-            sys_fault_code = FAULT_MAX_LIMIT_HIT;
-            diag.fault_count[FAULT_MAX_LIMIT_HIT]++;
-            stop_stepper_pio();
-            xQueueReset(xMotorCmdQueue);
-            mctl_state = MCTL_IDLE;
-            set_stepper_speed_mm_s(-DEFAULT_VMAX_MM_S);
-            uint32_t move_ticks = pdMS_TO_TICKS((uint32_t)((8189.0f / STEPS_PER_MM) / DEFAULT_VMAX_MM_S * 1000.0f));
-            vTaskDelay(move_ticks);
-            stop_stepper_pio();
-            flag_min_limit_hit = false;
-            flag_max_limit_hit = false;
-            pending_min_limit_event = false;
-            pending_max_limit_event = false;
-            sys_fault_code = FAULT_NONE;
-            sys_state = SYS_OPERATIONAL;
-            printf("[Motor] Max limit recovery complete (moved 8189 steps).\n");
+        if (flag_min_limit_hit || flag_max_limit_hit) {
+            treat_fault_limit(&mctl_state);
             xLastWakeTime = xTaskGetTickCount();
             continue;
         }
 
         // Leitura atual do potenciômetro e atualização do estado do sistema
         uint16_t current_val = read_potentiometer_raw();
+        //printf("[Motor] Current potentiometer value: %u\n", current_val);
         setPotValue(current_val);
 
         float h_medido = potToPistonPos(current_val);
@@ -213,8 +237,12 @@ void vMotorControlTask(void *pvParameters) {
 
             float h_target = potToPistonPos(current_cmd.target_pot);
             float now_sec = (float)xTaskGetTickCount() * (1.0f / configTICK_RATE_HZ);
+            float requested_vmax = (current_cmd.speed > 0) ? MOTOR_RPM_TO_MM_S(current_cmd.speed) : DEFAULT_VMAX_MM_S;
 
-            velocity_generator_start(&vel_gen, h_medido, h_target, now_sec, DEFAULT_VMAX_MM_S, 3.0f);
+            //printf("[Motor DBG] cmd received: type=%u target_pot=%u current_pot=%u h_medido=%.3f h_target=%.3f\n",
+            //       (unsigned)mctl_state, (unsigned)current_cmd.target_pot, (unsigned)current_val, h_medido, h_target);
+
+            velocity_generator_start(&vel_gen, h_medido, h_target, now_sec, requested_vmax, 3.0f);
             pid_reset(&pid);
 
             if (vbs_should_log(1)) {
@@ -225,45 +253,9 @@ void vMotorControlTask(void *pvParameters) {
 
         // Execução da malha de controle PID e gerador de trajetória
         if (mctl_state == MCTL_MOVING_UNTIL_POT || mctl_state == MCTL_MOVING_ABSOLUTE) {
-            float now_sec = (float)xTaskGetTickCount() * (1.0f / configTICK_RATE_HZ);
-            TrajectoryPoint_t traj = velocity_generator_update(&vel_gen, now_sec);
-
-            float pos_error = traj.href - h_medido;
-
-            if (traj.is_completed && fabsf(pos_error) < 0.2f) {
-                stop_stepper_pio();
-                mctl_state = MCTL_IDLE;
-                diag.motor_move_complete++;
-                printf("[Motor] Target reached! h_medido=%.2f mm, error=%.2f mm\n", h_medido, pos_error);
-            } else {
-                float v_control = pid_compute(&pid, traj.href, h_medido, dt);
-                set_stepper_speed_mm_s(v_control);
-            }
+            potentiometer_movement(&vel_gen, &pid, dt, h_medido, &mctl_state);
         } else if (mctl_state == MCTL_MOVING_PULSES) {
-            if (current_cmd.pulses == 0) {
-                stop_stepper_pio();
-                mctl_state = MCTL_IDLE;
-                diag.motor_move_complete++;
-            } else {
-                float speed = (current_cmd.direction == 0) ? DEFAULT_VMAX_MM_S : -DEFAULT_VMAX_MM_S;
-                set_stepper_speed_mm_s(speed);
-
-                float steps_this_tick = fabsf(speed) * STEPS_PER_MM * dt;
-                uint32_t consumed_steps = (uint32_t)steps_this_tick;
-                if (consumed_steps == 0) {
-                    consumed_steps = 1;
-                }
-
-                if (current_cmd.pulses <= consumed_steps) {
-                    current_cmd.pulses = 0;
-                    stop_stepper_pio();
-                    mctl_state = MCTL_IDLE;
-                    diag.motor_move_complete++;
-                    printf("[Motor] Move complete after %lu steps\n", (unsigned long)consumed_steps);
-                } else {
-                    current_cmd.pulses -= consumed_steps;
-                }
-            }
+            pulses_movement(&current_cmd, dt, &mctl_state);
         } else {
             stop_stepper_pio();
         }
@@ -298,36 +290,7 @@ void vParserTask(void *pvParameters) {
 
         // ASCII line processing (commands like 'help', 'diag', 'move N', 'move_pot P')
         if (ch == '\n' || ch == '\r') {
-            if (line_idx > 0) {
-                line_buffer[line_idx] = '\0';
-
-                last_pc_heartbeat_ms = xTaskGetTickCount();
-                diag.pc_heartbeats++;
-
-                if (vbs_should_log(3) || vbs_should_log(6)) printf("\n[Parser] Received: '%s'\n", line_buffer);
-
-                char *cmd = strtok(line_buffer, " \t");
-                if (cmd != NULL) {
-                    for (char *p = cmd; *p; ++p) *p = tolower((unsigned char)*p);
-
-                    bool found = false;
-                    for (size_t i = 0; i < NUM_COMMANDS; i++) {
-                        if (strcmp(cmd, cmd_table[i].name) == 0) {
-                            cmd_table[i].handler();
-                            found = true;
-                            break;
-                        }
-                    }
-                    if (!found) {
-                        printf("Unknown command: '%s'\n", cmd);
-                    }
-                }
-
-                line_idx = 0;
-                rx_len = 0;
-            }
-            printf("> ");
-            fflush(stdout);
+            process_ascii_line(line_buffer, &line_idx, &rx_len);
         }
         else if (ch >= 32 && ch < 127) {
             if (line_idx < (int)sizeof(line_buffer) - 1) {
@@ -354,31 +317,7 @@ void vParserTask(void *pvParameters) {
                 memmove(rx_buf, rx_buf + 1, sizeof(rx_buf) - 1);
                 rx_buf[sizeof(rx_buf) - 1] = (uint8_t)ch;
             }
-
-            while (rx_len >= 4) {
-                uint8_t expected_addr = getAddress();
-                if (rx_buf[1] == expected_addr) {
-                    uint8_t payload_size = rx_buf[2];
-                    if (payload_size <= 4) {
-                        size_t expected_packet_len = 4 + payload_size;
-                        if (rx_len >= expected_packet_len) {
-                            uint8_t calculated_crc = calculateCRC8Bluetooth(&rx_buf[1], expected_packet_len - 1);
-                            uint8_t received_crc = rx_buf[0];
-
-                            if (calculated_crc == received_crc) {
-                                handle_binary_command(rx_buf[3], &rx_buf[4], payload_size);
-                                memmove(rx_buf, rx_buf + expected_packet_len, rx_len - expected_packet_len);
-                                rx_len -= expected_packet_len;
-                                continue;
-                            }
-                        } else {
-                            break;
-                        }
-                    }
-                }
-                memmove(rx_buf, rx_buf + 1, rx_len - 1);
-                rx_len--;
-            }
+            process_binary_stream(rx_buf, &rx_len);
         }
     }
 }

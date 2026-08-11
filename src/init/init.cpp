@@ -44,6 +44,7 @@ void initializeHardware(void) {
         mutex_init(m);
     }
     stdio_init_all();
+    setbuf(stdout, NULL);
     sleep_ms(2000);
 
     printf("\n=== VBS v3.0 Hardware Initialization ===\n");
