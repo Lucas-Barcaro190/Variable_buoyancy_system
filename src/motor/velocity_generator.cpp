@@ -1,6 +1,13 @@
 #include "src/motor/velocity_generator.h"
 #include <math.h>
 
+/*
+Desc: Initialize a velocity generator object with default motion parameters.
+params:
+    - [VelocityGenerator_t*] gen: Pointer to the trajectory generator instance.
+returns:
+    - [void]
+*/
 void velocity_generator_init(VelocityGenerator_t *gen) {
     if (!gen) return;
     gen->h_start = 0.0f;
@@ -21,6 +28,18 @@ void velocity_generator_init(VelocityGenerator_t *gen) {
     gen->is_deadband = false;
 }
 
+/*
+Desc: Start a motion trajectory from the current piston position to a target position.
+params:
+    - [VelocityGenerator_t*] gen: Pointer to the trajectory generator instance.
+    - [float] h_start: Starting piston position in mm.
+    - [float] h_target: Target piston position in mm.
+    - [float] t_now_sec: Current time in seconds.
+    - [float] vmax: Desired maximum velocity in mm/s.
+    - [float] accel_time: Desired acceleration time in seconds.
+returns:
+    - [void]
+*/
 void velocity_generator_start(VelocityGenerator_t *gen, float h_start, float h_target, float t_now_sec, float vmax, float accel_time) {
     if (!gen) return;
     
@@ -76,6 +95,14 @@ void velocity_generator_start(VelocityGenerator_t *gen, float h_start, float h_t
     gen->active = true;
 }
 
+/*
+Desc: Compute the current trajectory reference position and velocity.
+params:
+    - [VelocityGenerator_t*] gen: Pointer to the active trajectory generator.
+    - [float] t_now_sec: Current time in seconds.
+returns:
+    - [TrajectoryPoint_t]: Current reference position, speed, and completion flag.
+*/
 TrajectoryPoint_t velocity_generator_update(VelocityGenerator_t *gen, float t_now_sec) {
     TrajectoryPoint_t pt = {0.0f, 0.0f, true};
     

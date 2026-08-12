@@ -1,6 +1,8 @@
 #include "src/core/shared_state.h"
 
 #include <string.h>
+#include "FreeRTOS.h"
+#include "task.h"
 
 volatile SystemState_t sys_state = SYS_INIT;
 volatile FaultCode_t sys_fault_code = FAULT_NONE;
@@ -37,6 +39,13 @@ StackType_t xDiagnosticsStack[DIAGNOSTICS_STACK_SIZE];
 StaticQueue_t xMotorCmdQueueHandle;
 uint8_t ucMotorCmdQueueStorage[MOTOR_CMD_QUEUE_SIZE * sizeof(MotorCmd_t)];
 
+/*
+Desc: Convert a system state enum value to a human-readable string.
+params:
+    - [SystemState_t] state: State value to convert.
+returns:
+    - [const char*]: String representing the state.
+*/
 const char* stateToString(SystemState_t state) {
     switch (state) {
     case SYS_INIT: return "INIT";
@@ -50,6 +59,13 @@ const char* stateToString(SystemState_t state) {
     }
 }
 
+/*
+Desc: Convert a fault code enum value to a human-readable string.
+params:
+    - [FaultCode_t] fault: Fault code to convert.
+returns:
+    - [const char*]: String representing the fault code.
+*/
 const char* faultToString(FaultCode_t fault) {
     switch (fault) {
     case FAULT_NONE: return "NONE";
@@ -62,29 +78,83 @@ const char* faultToString(FaultCode_t fault) {
     }
 }
 
+/*
+Desc: Return the last sampled potentiometer value stored in shared state.
+params:
+    - none
+returns:
+    - [uint16_t]: Current shared potentiometer reading.
+*/
 uint16_t getPotValue(void) {
-    return potentiometer_value;
+    uint16_t value;
+    taskENTER_CRITICAL();
+    value = potentiometer_value;
+    taskEXIT_CRITICAL();
+    return value;
 }
 
+/*
+Desc: Update the shared potentiometer value in global state.
+params:
+    - [uint16_t] val: New potentiometer value.
+returns:
+    - [uint16_t]: The value written to shared state.
+*/
 uint16_t setPotValue(uint16_t val) {
+    taskENTER_CRITICAL();
     potentiometer_value = val;
+    taskEXIT_CRITICAL();
     return val;
 }
 
+/*
+Desc: Get the current target potentiometer value used by motor commands.
+params:
+    - none
+returns:
+    - [uint16_t]: Currently stored target potentiometer command value.
+*/
 uint16_t get_target_pot_value(void) {
-    return target_pot_shared;
+    uint16_t value;
+    taskENTER_CRITICAL();
+    value = target_pot_shared;
+    taskEXIT_CRITICAL();
+    return value;
 }
 
+/*
+Desc: Store a new target potentiometer value used by motor commands.
+params:
+    - [uint16_t] val: New target potentiometer value.
+returns:
+    - [void]
+*/
 void set_target_pot_value(uint16_t val) {
+    taskENTER_CRITICAL();
     target_pot_shared = val;
+    taskEXIT_CRITICAL();
 }
 
+/*
+Desc: Safely change the device communication address in shared state.
+params:
+    - [uint8_t] newAddress: New address value for the device.
+returns:
+    - [void]
+*/
 void changeAddress(uint8_t newAddress) {
     taskENTER_CRITICAL();
     vbsAddress = newAddress;
     taskEXIT_CRITICAL();
 }
 
+/*
+Desc: Safely read the current device communication address from shared state.
+params:
+    - none
+returns:
+    - [uint8_t]: Current device address.
+*/
 uint8_t getAddress(void) {
     uint8_t address;
     taskENTER_CRITICAL();
@@ -93,6 +163,13 @@ uint8_t getAddress(void) {
     return address;
 }
 
+/*
+Desc: Decide whether a given debug verbosity level should be logged.
+params:
+    - [uint8_t] level: Verbosity level for the message.
+returns:
+    - [bool]: True if the message should be emitted.
+*/
 bool vbs_should_log(uint8_t level) {
     return (verbose_level == 6) || (verbose_level == level);
 }

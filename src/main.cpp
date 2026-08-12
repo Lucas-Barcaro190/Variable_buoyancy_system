@@ -4,6 +4,13 @@
 #include "task.h"
 #include "src/init/init.h"
 
+/*
+Desc: Entry point for the application. Initializes hardware and RTOS, then starts the scheduler.
+params:
+    - none
+returns:
+    - [int]: Program exit code (should never return during normal operation).
+*/
 int main(void) {
     initializeHardware();
     initializeRTOS();

@@ -18,11 +18,20 @@
 #include "src/comms/protocol.h"
 #include "src/core/shared_state.h"
 
+/*
+Desc: Print the list of available serial commands.
+params:
+    - none
+returns:
+    - [void]
+*/
 static void handle_cmd_help(void) {
     printf("Available commands:\n");
     printf("  help         - Show this help\n");
     printf("  move N       - Move N steps (signed)\n");
     printf("                 e.g. move 4094  or move -4094\n");
+    printf("  move_constant N - Move N steps at constant speed\n");
+    printf("                 e.g. move_constant 4094  or move_constant -4094\n");
     printf("  move_pot P   - Move to potentiometer value P (0-511)\n");
     printf("                 e.g. move_pot 48  or move_pot 430\n");
     printf("  diag         - Print diagnostics now\n");
@@ -30,10 +39,24 @@ static void handle_cmd_help(void) {
     printf("  stop         - Send driver stop command\n");
 }
 
+/*
+Desc: Inform the user that PID is not supported by this driver.
+params:
+    - none
+returns:
+    - [void]
+*/
 static void handle_cmd_change_pid(void) {
     printf("[Parser] PID control is not supported on the pulse/dir driver.\n");
 }
 
+/*
+Desc: Set or report the current verbosity logging level.
+params:
+    - none
+returns:
+    - [void]
+*/
 static void handle_cmd_verbose(void) {
     char *arg = strtok(NULL, " \t");
     if (arg != NULL) {
@@ -48,6 +71,13 @@ static void handle_cmd_verbose(void) {
     }
 }
 
+/*
+Desc: Print on-demand system diagnostics to the console.
+params:
+    - none
+returns:
+    - [void]
+*/
 static void handle_cmd_diag(void) {
     printf("\n--- DIAGNOSTICS (on-demand) ---\n");
     printf("State: %s\n", stateToString(sys_state));
@@ -60,10 +90,24 @@ static void handle_cmd_diag(void) {
     printf("--- end diagnostics ---\n\n");
 }
 
+/*
+Desc: Print the latest shared potentiometer reading.
+params:
+    - none
+returns:
+    - [void]
+*/
 static void handle_cmd_pot(void) {
     printf("Potentiometer (raw ADC avg): %d\n", getPotValue());
 }
 
+/*
+Desc: Queue an immediate stop command for the motor driver.
+params:
+    - none
+returns:
+    - [void]
+*/
 static void handle_cmd_stop(void) {
     MotorCmd_t cmd = {0};
     cmd.cmd_type = MCTL_IDLE;
@@ -71,6 +115,13 @@ static void handle_cmd_stop(void) {
     printf("Queued stop command\n");
 }
 
+/*
+Desc: Parse and queue a pulse-count movement command from ASCII input.
+params:
+    - none
+returns:
+    - [void]
+*/
 static void handle_cmd_move(void) {
     char *arg1 = strtok(NULL, " \t");
     if (arg1 == NULL) {
@@ -94,6 +145,43 @@ static void handle_cmd_move(void) {
     }
 }
 
+/*
+Desc: Parse and queue a constant-speed pulse movement command from ASCII input.
+params:
+    - none
+returns:
+    - [void]
+*/
+static void handle_cmd_move_constant(void) {
+    char *arg1 = strtok(NULL, " \t");
+    if (arg1 == NULL) {
+        printf("Usage: move_constant <steps>\n");
+        return;
+    }
+    long steps = strtol(arg1, NULL, 10);
+
+    uint8_t direction = (steps < 0) ? 1 : 0;
+    uint32_t pulses = (uint32_t)(steps < 0 ? -steps : steps);
+    if (pulses == 0) {
+        printf("No pulses to send (0)\n");
+    }
+    else {
+        MotorCmd_t cmd = {0};
+        cmd.cmd_type = MCTL_MOVING_PULSES;
+        cmd.pulses = pulses;
+        cmd.direction = direction;
+        xQueueSend(xMotorCmdQueue, &cmd, portMAX_DELAY);
+        printf("Queued constant-speed move command: pulses=%lu, direction=%u\n", (unsigned long)pulses, (unsigned)direction);
+    }
+}
+
+/*
+Desc: Parse and queue a potentiometer target movement command from ASCII input.
+params:
+    - none
+returns:
+    - [void]
+*/
 static void handle_cmd_move_pot(void) {
     char *arg1 = strtok(NULL, " \t");
     if (arg1 == NULL) {
@@ -126,12 +214,22 @@ static const cmd_entry_t cmd_table[] = {
     {"pot", handle_cmd_pot},
     {"stop", handle_cmd_stop},
     {"move", handle_cmd_move},
+    {"move_constant", handle_cmd_move_constant},
     {"move_pot", handle_cmd_move_pot},
 };
 
 #define NUM_COMMANDS (sizeof(cmd_table) / sizeof(cmd_table[0]))
 
 // Process a completed ASCII line (commands like 'help', 'diag', 'move N', 'move_pot P')
+/*
+Desc: Process a completed ASCII command line and dispatch the matching handler.
+params:
+    - [char*] line_buffer: Buffer containing the input line.
+    - [int*] line_idx: Current index in the line buffer.
+    - [size_t*] rx_len: Length of the binary receive buffer (cleared after processing).
+returns:
+    - [void]
+*/
 static void process_ascii_line(char *line_buffer, int *line_idx, size_t *rx_len) {
     if (*line_idx > 0) {
         line_buffer[*line_idx] = '\0';
@@ -166,6 +264,14 @@ static void process_ascii_line(char *line_buffer, int *line_idx, size_t *rx_len)
 }
 
 // Process binary/non-ASCII stream in rx_buf.
+/*
+Desc: Parse and process binary protocol packets from the receive buffer.
+params:
+    - [uint8_t*] rx_buf: Buffer containing received bytes.
+    - [size_t*] rx_len: Number of bytes currently in the buffer.
+returns:
+    - [void]
+*/
 static void process_binary_stream(uint8_t *rx_buf, size_t *rx_len) {
     while (*rx_len >= 4) {
         uint8_t expected_addr = getAddress();
@@ -193,6 +299,13 @@ static void process_binary_stream(uint8_t *rx_buf, size_t *rx_len) {
     }
 }
 
+/*
+Desc: Main motor control task. Reads the potentiometer, updates state, and executes motion commands.
+params:
+    - [void*] pvParameters: Task parameters (unused).
+returns:
+    - [void]
+*/
 void vMotorControlTask(void *pvParameters) {
     (void)pvParameters;
     potentiometer_init();
@@ -220,9 +333,9 @@ void vMotorControlTask(void *pvParameters) {
             continue;
         }
 
-        // Leitura atual do potenciômetro e atualização do estado do sistema
-        uint16_t current_val = read_potentiometer_raw();
-        //printf("[Motor] Current potentiometer value: %u\n", current_val);
+        // Leitura atual do potenciômetro com filtro de mediana e atualização do estado do sistema
+        uint16_t current_val = read_potentiometer_median();
+        printf("%u\n", current_val);
         setPotValue(current_val);
 
         float h_medido = potToPistonPos(current_val);
@@ -264,6 +377,13 @@ void vMotorControlTask(void *pvParameters) {
     }
 }
 
+/*
+Desc: Parser task for serial ASCII and binary command input.
+params:
+    - [void*] pvParameters: Task parameters (unused).
+returns:
+    - [void]
+*/
 void vParserTask(void *pvParameters) {
     char line_buffer[256];
     int line_idx = 0;
@@ -322,6 +442,13 @@ void vParserTask(void *pvParameters) {
     }
 }
 
+/*
+Desc: Fault manager task that monitors heartbeat and limit switch events.
+params:
+    - [void*] pvParameters: Task parameters (unused).
+returns:
+    - [void]
+*/
 void vFaultManagerTask(void *pvParameters) {
     (void)pvParameters;
     if (vbs_should_log(5)) printf("[FaultMgr] Limit switch interrupts configured on Core 1\n");
@@ -337,6 +464,13 @@ void vFaultManagerTask(void *pvParameters) {
     }
 }
 
+/*
+Desc: Periodic diagnostics task that prints system health and statistics.
+params:
+    - [void*] pvParameters: Task parameters (unused).
+returns:
+    - [void]
+*/
 void vDiagnosticsTask(void *pvParameters) {
     (void)pvParameters;
     if (vbs_should_log(5)) printf("[Diagnostics] Task started on Core 1\n");

@@ -16,7 +16,18 @@ static uint stepper_offset = 0;
 static bool stepper_pio_enabled = false;
 static float pio_clkdiv = 125.0f; // 125 MHz / 125 = 1 MHz PIO clock
 
-// Inicialização do PID
+/*
+Desc: Initialize PID controller parameters and reset internal state.
+params:
+    - [PIDController_t*] pid: Pointer to the PID controller instance.
+    - [float] Kp: Proportional gain.
+    - [float] Ki: Integral gain.
+    - [float] Kd: Derivative gain.
+    - [float] out_min: Minimum output value.
+    - [float] out_max: Maximum output value.
+returns:
+    - [void]
+*/
 void pid_init(PIDController_t *pid, float Kp, float Ki, float Kd, float out_min, float out_max) {
     if (!pid) return;
     pid->Kp = Kp;
@@ -28,13 +39,29 @@ void pid_init(PIDController_t *pid, float Kp, float Ki, float Kd, float out_min,
     pid->out_max = out_max;
 }
 
+/*
+Desc: Reset the integral and derivative state of the PID controller.
+params:
+    - [PIDController_t*] pid: Pointer to the PID controller instance.
+returns:
+    - [void]
+*/
 void pid_reset(PIDController_t *pid) {
     if (!pid) return;
     pid->integral = 0.0f;
     pid->prev_error = 0.0f;
 }
 
-// Cálculo do PID discreto
+/*
+Desc: Compute a PID output value from the current error and elapsed time.
+params:
+    - [PIDController_t*] pid: Pointer to the PID controller instance.
+    - [float] setpoint: Desired target value.
+    - [float] measurement: Current measured value.
+    - [float] dt: Time step in seconds.
+returns:
+    - [float]: PID controller output, clamped to configured output limits.
+*/
 float pid_compute(PIDController_t *pid, float setpoint, float measurement, float dt) {
     if (!pid || dt <= 0.0f) return 0.0f;
 
@@ -67,7 +94,13 @@ float pid_compute(PIDController_t *pid, float setpoint, float measurement, float
     return output;
 }
 
-// Configuração da PIO para PWM contínuo do motor de passo
+/*
+Desc: Initialize the stepper motor PIO state machine and GPIO pins.
+params:
+    - none
+returns:
+    - [void]
+*/
 void setup_stepper_pio(void) {
     stepper_offset = pio_add_program(stepper_pio, &stepper_variable_program);
     pio_gpio_init(stepper_pio, PIN_MOTOR_PULSE);
@@ -87,6 +120,13 @@ void setup_stepper_pio(void) {
     gpio_put(PIN_MOTOR_DIR, 0);
 }
 
+/*
+Desc: Set the stepper PIO output period directly.
+params:
+    - [uint32_t] period_x: Period value to send to the PIO state machine.
+returns:
+    - [void]
+*/
 void set_stepper_period(uint32_t period_x) {
     if (period_x == 0) {
         period_x = 1;
@@ -94,6 +134,13 @@ void set_stepper_period(uint32_t period_x) {
     pio_sm_put_blocking(stepper_pio, stepper_sm, period_x);
 }
 
+/*
+Desc: Convert a target speed in mm/s to stepper pulse timing and enable the PIO.
+params:
+    - [float] speed_mm_s: Desired linear speed in mm/s.
+returns:
+    - [void]
+*/
 void set_stepper_speed_mm_s(float speed_mm_s) {
     float speed_mag = fabsf(speed_mm_s);
 
@@ -134,6 +181,13 @@ void set_stepper_speed_mm_s(float speed_mm_s) {
     pio_sm_put_blocking(stepper_pio, stepper_sm, period_x);
 }
 
+/*
+Desc: Stop the stepper motor PIO state machine and clear FIFOs.
+params:
+    - none
+returns:
+    - [void]
+*/
 void stop_stepper_pio(void) {
     pio_sm_set_enabled(stepper_pio, stepper_sm, false);
     pio_sm_clear_fifos(stepper_pio, stepper_sm);
@@ -142,22 +196,51 @@ void stop_stepper_pio(void) {
     stepper_pio_enabled = false;
 }
 
+/*
+Desc: Issue a stop command to the motor driver and stop pulses.
+params:
+    - none
+returns:
+    - [void]
+*/
 void sendStopCommand(void) {
     stop_stepper_pio();
     printf("[HW -> Stepper]: Stop pulses\n");
 }
 
+/*
+Desc: Enable the motor driver output.
+params:
+    - none
+returns:
+    - [void]
+*/
 void sendEnableCommand(void) {
     gpio_put(PIN_ENABLE_DRIVER, 0);
     printf("[HW -> Stepper]: Enable driver\n");
 }
 
+/*
+Desc: Disable the motor driver and stop all pulses immediately.
+params:
+    - none
+returns:
+    - [void]
+*/
 void sendDisableCommand(void) {
     gpio_put(PIN_ENABLE_DRIVER, 1);
     stop_stepper_pio();
     printf("[HW -> Stepper]: **DISABLE** (emergency stop)\n");
 }
 
+/*
+Desc: GPIO interrupt handler for limit switches, debounces and schedules pending events.
+params:
+    - [uint] gpio: GPIO pin number that triggered the interrupt.
+    - [uint32_t] events: GPIO event flags.
+returns:
+    - [void]
+*/
 void gpio_limit_switches_callback(uint gpio, uint32_t events) {
     if (!limit_switches_ready) {
         return;
@@ -197,6 +280,13 @@ void gpio_limit_switches_callback(uint gpio, uint32_t events) {
     taskEXIT_CRITICAL_FROM_ISR(uxSavedInterruptStatus);
 }
 
+/*
+Desc: Confirm pending limit switch events and set limit fault flags.
+params:
+    - none
+returns:
+    - [void]
+*/
 void evaluate_pending_limit_switches(void) {
     if (pending_min_limit_event) {
         pending_min_limit_event = false;
@@ -215,6 +305,13 @@ void evaluate_pending_limit_switches(void) {
     }
 }
 
+/*
+Desc: Configure limit switch GPIOs and their interrupt callbacks on core 1.
+params:
+    - none
+returns:
+    - [void]
+*/
 void setup_limit_switches_on_core1(void) {
     limit_switches_ready = false;
     last_min_limit_event_us = 0;
@@ -240,7 +337,13 @@ void setup_limit_switches_on_core1(void) {
     limit_switches_ready = true;
 }
 
-// Unified treatment for limit switch faults. Called from vMotorControlTask.
+/*
+Desc: Handle a confirmed limit-switch fault by stopping motion and queuing recovery.
+params:
+    - [MotorControlState_t*] mctl_state: Pointer to current motor control state.
+returns:
+    - [void]
+*/
 void treat_fault_limit(MotorControlState_t *mctl_state) {
     if (flag_min_limit_hit) {
         printf("[Motor] **CRITICAL** Min limit switch hit! Recovering by queuing move 8188 steps (+1 direction)...\n");
@@ -289,7 +392,17 @@ void treat_fault_limit(MotorControlState_t *mctl_state) {
     }
 }
 
-// Handle potentiometer-based movement (MCTL_MOVING_UNTIL_POT or MCTL_MOVING_ABSOLUTE)
+/*
+Desc: Execute closed-loop piston movement toward a potentiometer-based target.
+params:
+    - [VelocityGenerator_t*] vel_gen: Trajectory generator context.
+    - [PIDController_t*] pid: PID controller context.
+    - [float] dt: Loop time step in seconds.
+    - [float] h_medido: Current piston position in mm.
+    - [MotorControlState_t*] mctl_state: Current motor state, updated when complete.
+returns:
+    - [void]
+*/
 void potentiometer_movement(VelocityGenerator_t *vel_gen, PIDController_t *pid, float dt, float h_medido, MotorControlState_t *mctl_state) {
     float now_sec = (float)xTaskGetTickCount() * (1.0f / configTICK_RATE_HZ);
     TrajectoryPoint_t traj = velocity_generator_update(vel_gen, now_sec);
@@ -308,7 +421,15 @@ void potentiometer_movement(VelocityGenerator_t *vel_gen, PIDController_t *pid, 
     }
 }
 
-// Handle pulse-count based movement (MCTL_MOVING_PULSES)
+/*
+Desc: Execute a pulse-count movement command using fixed speed and pulse consumption.
+params:
+    - [MotorCmd_t*] current_cmd: Current motor command with remaining pulses.
+    - [float] dt: Loop time step in seconds.
+    - [MotorControlState_t*] mctl_state: Current motor state, updated when complete.
+returns:
+    - [void]
+*/
 void pulses_movement(MotorCmd_t *current_cmd, float dt, MotorControlState_t *mctl_state) {
     static uint32_t pulses_total_init = 0;
     static uint32_t pulses_accel = 0;
@@ -360,7 +481,7 @@ void pulses_movement(MotorCmd_t *current_cmd, float dt, MotorControlState_t *mct
         uint32_t wait_us = (uint32_t)ceilf(final_time_s * 1000000.0f);
         if (wait_us > 0) {
             if (vbs_should_log(4)) printf("[Motor] Waiting %.3f ms for final %.0f pulses\n", wait_us / 1000.0f, final_pulses);
-            busy_wait_us(wait_us);
+            busy_wait_us(wait_us); // ver se posso substituir
         }
 
         current_cmd->pulses = 0;

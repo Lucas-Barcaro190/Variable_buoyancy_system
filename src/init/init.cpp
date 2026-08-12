@@ -26,6 +26,13 @@ extern "C" {
     }
 }
 
+/*
+Desc: Initialize the shared hardware synchronization spinlock pointer.
+params:
+    - none
+returns:
+    - [void]
+*/
 void initialize_hardware_sync(void) {
     static uint32_t dummy_spinlock = 0xFFFFFFFF;
     vbs_shared_lock = (spin_lock_t *)&dummy_spinlock;
@@ -36,6 +43,13 @@ extern "C" {
     extern mutex_t __mutex_array_end;
 }
 
+/*
+Desc: Perform all board-level hardware initialization before RTOS startup.
+params:
+    - none
+returns:
+    - [void]
+*/
 void initializeHardware(void) {
     spin_locks_reset();
     mutex_t *start = &__mutex_array_start;
@@ -63,6 +77,13 @@ void initializeHardware(void) {
     printf("=== Hardware Initialization Complete ===\n\n");
 }
 
+/*
+Desc: Create the motor command queue and initialize all static RTOS tasks.
+params:
+    - none
+returns:
+    - [void]
+*/
 void initializeRTOS(void) {
     printf("=== RTOS Initialization ===\n");
     printf("[RTOS] Potentiometer access protected by hardware spinlocks\n");

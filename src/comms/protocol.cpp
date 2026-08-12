@@ -8,6 +8,13 @@
 #include "queue.h"
 #include "task.h"
 
+/*
+Desc: Reflect the bits of a byte (reverse bit order).
+params:
+    - [uint8_t] val: Byte to reflect.
+returns:
+    - [uint8_t]: Reflected byte.
+*/
 static uint8_t reflect8(uint8_t val) {
     uint8_t res = 0;
     for (int i = 0; i < 8; i++) {
@@ -18,6 +25,14 @@ static uint8_t reflect8(uint8_t val) {
     return res;
 }
 
+/*
+Desc: Calculate a CRC-8 checksum using the Bluetooth polynomial.
+params:
+    - [const uint8_t*] data: Pointer to the input data.
+    - [size_t] length: Number of bytes to checksum.
+returns:
+    - [uint8_t]: CRC-8 checksum.
+*/
 uint8_t calculateCRC8Bluetooth(const uint8_t* data, size_t length) {
     uint8_t crc = 0x00;
     for (size_t i = 0; i < length; i++) {
@@ -33,6 +48,14 @@ uint8_t calculateCRC8Bluetooth(const uint8_t* data, size_t length) {
     return reflect8(crc);
 }
 
+/*
+Desc: Send a binary acknowledgment packet for a received command.
+params:
+    - [uint8_t] command_code: Command code being acknowledged.
+    - [bool] success: Acknowledgment status.
+returns:
+    - [void]
+*/
 static void send_binary_ack(uint8_t command_code, bool success) {
     uint8_t data[2];
     data[0] = success ? 0x00 : command_code;
@@ -40,24 +63,62 @@ static void send_binary_ack(uint8_t command_code, bool success) {
     sendBinaryPacket(CMD_ACK_CMD, data, 2);
 }
 
+/*
+Desc: Send a binary error packet indicating a command failure.
+params:
+    - [uint8_t] command_code: Command code that caused the error.
+returns:
+    - [void]
+*/
 static void send_binary_error(uint8_t command_code) {
     uint8_t data[1];
     data[0] = command_code;
     sendBinaryPacket(CMD_ERR_OUT_OF_BOUNDS, data, 1);
 }
 
+/*
+Desc: Extract the payload size from a packed message type code.
+params:
+    - [uint16_t] msg_type_code: Packed size/type code.
+returns:
+    - [uint8_t]: Extracted payload size.
+*/
 uint8_t getMsgSize(uint16_t msg_type_code) {
     return (uint8_t)((msg_type_code >> 8) & 0xFF);
 }
 
+/*
+Desc: Extract the message type from a packed message type code.
+params:
+    - [uint16_t] msg_type_code: Packed size/type code.
+returns:
+    - [uint8_t]: Extracted message type.
+*/
 uint8_t getMsgType(uint16_t msg_type_code) {
     return (uint8_t)(msg_type_code & 0xFF);
 }
 
+/*
+Desc: Pack a message size and type into a single 16-bit value.
+params:
+    - [uint8_t] size: Payload size.
+    - [uint8_t] type: Message type.
+returns:
+    - [uint16_t]: Combined size/type code.
+*/
 uint16_t makeMsgTypeCode(uint8_t size, uint8_t type) {
     return (uint16_t)((size << 8) | type);
 }
 
+/*
+Desc: Construct and send a binary packet with CRC and address header.
+params:
+    - [uint8_t] msgType: Packet message type.
+    - [const uint8_t*] data: Pointer to payload data.
+    - [uint8_t] size: Payload size.
+returns:
+    - [void]
+*/
 void sendBinaryPacket(uint8_t msgType, const uint8_t* data, uint8_t size) {
     uint8_t packet[8];
     packet[1] = getAddress();
