@@ -28,6 +28,7 @@ returns:
 static void handle_cmd_help(void) {
     printf("Available commands:\n");
     printf("  help         - Show this help\n");
+    printf("  change_pid XX YY - Set PID parameter XX={kp|ki|kd} to float value YY\n");
     printf("  move N       - Move N steps (signed)\n");
     printf("                 e.g. move 4094  or move -4094\n");
     printf("  move_constant N - Move N steps at constant speed\n");
@@ -40,14 +41,50 @@ static void handle_cmd_help(void) {
 }
 
 /*
-Desc: Inform the user that PID is not supported by this driver.
+Desc: Update PID coefficients for the active motor PID controller.
 params:
     - none
 returns:
     - [void]
 */
 static void handle_cmd_change_pid(void) {
-    printf("[Parser] PID control is not supported on the pulse/dir driver.\n");
+    char *arg1 = strtok(NULL, " \t");
+    char *arg2 = strtok(NULL, " \t");
+    if (arg1 == NULL || arg2 == NULL) {
+        printf("Usage: change_pid <kp|ki|kd> <value>\n");
+        return;
+    }
+
+    for (char *p = arg1; *p; ++p) {
+        *p = tolower((unsigned char)*p);
+    }
+
+    char *endptr = NULL;
+    float value = strtof(arg2, &endptr);
+    if (endptr == arg2 || *endptr != '\0' || !isfinite(value)) {
+        printf("[Parser] Invalid PID value '%s'\n", arg2);
+        return;
+    }
+
+    bool recognized = true;
+    taskENTER_CRITICAL();
+    if (strcmp(arg1, "kp") == 0) {
+        pid_Kp = value;
+    } else if (strcmp(arg1, "ki") == 0) {
+        pid_Ki = value;
+    } else if (strcmp(arg1, "kd") == 0) {
+        pid_Kd = value;
+    } else {
+        recognized = false;
+    }
+    taskEXIT_CRITICAL();
+
+    if (!recognized) {
+        printf("[Parser] Unknown PID parameter '%s'. Use kp, ki, or kd.\n", arg1);
+        return;
+    }
+
+    printf("PID parameter %s set to %.6f\n", arg1, value);
 }
 
 /*
@@ -196,7 +233,8 @@ static void handle_cmd_move_pot(void) {
     cmd.cmd_type = MCTL_MOVING_UNTIL_POT;
     cmd.target_pot = (uint16_t)pot;
     xQueueSend(xMotorCmdQueue, &cmd, portMAX_DELAY);
-    printf("Queued move_pot target=%d\n", pot);
+    float h_target = potToPistonPos((uint16_t)pot);
+    printf("Queued move_pot target=%d (h_target=%.3f mm)\n", pot, h_target);
 }
 
 typedef void (*cmd_handler_t)(void);
@@ -321,10 +359,10 @@ void vMotorControlTask(void *pvParameters) {
     velocity_generator_init(&vel_gen);
 
     PIDController_t pid;
-    pid_init(&pid, 1.5f, 0.05f, 0.01f, -DEFAULT_VMAX_MM_S, DEFAULT_VMAX_MM_S);
+    pid_init(&pid, 1.0f, 0.01f, 0.0f, -DEFAULT_VMAX_MM_S, DEFAULT_VMAX_MM_S);
 
     if (vbs_should_log(1)) printf("[Motor] 20Hz Motor Control & PID Loop started on Core 0\n");
-
+    // comentaries
     for (;;) {
         evaluate_pending_limit_switches();
         if (flag_min_limit_hit || flag_max_limit_hit) {
@@ -335,32 +373,44 @@ void vMotorControlTask(void *pvParameters) {
 
         // Leitura atual do potenciômetro com filtro de mediana e atualização do estado do sistema
         uint16_t current_val = read_potentiometer_median();
-        printf("%u\n", current_val);
+        //printf("Current pot val: %u\n", current_val);
         setPotValue(current_val);
 
         float h_medido = potToPistonPos(current_val);
         currentPistonPosition = (int16_t)(h_medido * 100.0f);
         currentVolume = pistonPosToVolume(h_medido);
 
+        // Refresh PID coefficients from shared state before the control loop runs.
+        taskENTER_CRITICAL();
+        pid.Kp = pid_Kp;
+        pid.Ki = pid_Ki;
+        pid.Kd = pid_Kd;
+        taskEXIT_CRITICAL();
+
         // Processamento de novos comandos da fila
         if (xQueueReceive(xMotorCmdQueue, &current_cmd, 0) == pdTRUE) {
             mctl_state = (MotorControlState_t)current_cmd.cmd_type;
             diag.motor_cmd_queued++;
-            set_target_pot_value(current_cmd.target_pot);
 
-            float h_target = potToPistonPos(current_cmd.target_pot);
             float now_sec = (float)xTaskGetTickCount() * (1.0f / configTICK_RATE_HZ);
             float requested_vmax = (current_cmd.speed > 0) ? MOTOR_RPM_TO_MM_S(current_cmd.speed) : DEFAULT_VMAX_MM_S;
 
-            //printf("[Motor DBG] cmd received: type=%u target_pot=%u current_pot=%u h_medido=%.3f h_target=%.3f\n",
-            //       (unsigned)mctl_state, (unsigned)current_cmd.target_pot, (unsigned)current_val, h_medido, h_target);
+            if (mctl_state == MCTL_MOVING_UNTIL_POT || mctl_state == MCTL_MOVING_ABSOLUTE) {
+                set_target_pot_value(current_cmd.target_pot);
+                float h_target = potToPistonPos(current_cmd.target_pot);
 
-            velocity_generator_start(&vel_gen, h_medido, h_target, now_sec, requested_vmax, 3.0f);
-            pid_reset(&pid);
+                velocity_generator_start(&vel_gen, h_medido, h_target, now_sec, requested_vmax, 3.0f);
+                pid_reset(&pid);
 
-            if (vbs_should_log(1)) {
-                printf("[Motor] New command: type=%d, target_pot=%d (%.2f mm)\n",
-                       mctl_state, current_cmd.target_pot, h_target);
+                printf("[Motor] New command: type=%d, target_pot=%d (%.2f mm), h_start=%.3f mm, h_target=%.3f mm, requested_vmax=%.3f mm/s\n",
+                       mctl_state, current_cmd.target_pot, h_target, h_medido, h_target, requested_vmax);
+            } else if (mctl_state == MCTL_MOVING_PULSES) {
+                printf("[Motor] New command: type=%d, target_pot=%d, pulses=%lu, direction=%u\n",
+                       mctl_state, current_cmd.target_pot, (unsigned long)current_cmd.pulses, current_cmd.direction);
+            } else {
+                stop_stepper_pio();
+                vel_gen.active = false;
+                printf("[Motor] New command: type=%d (idle)\n", mctl_state);
             }
         }
 

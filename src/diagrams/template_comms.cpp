@@ -32,5 +32,11 @@ Comentarios aqui
 
 ================
 
+Calculo do alpha do filtro:
 
+- Amostragem = 20 Hz (50ms)
+- Quantização do sensor = 0,128mm
+- Velocidade máxima do pistão = 0,2035 mm/s
+- tau = quantização / velocidade = 0,128 / 0,2035 = 0,629 s
+- alpha = exp(-1 / (tau * fs)) = exp(-1 / (0,629 * 20)) = 0,920
 */

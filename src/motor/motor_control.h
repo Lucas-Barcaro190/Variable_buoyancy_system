@@ -20,6 +20,8 @@ typedef struct {
     float Kd;
     float integral;
     float prev_error;
+    float filtered_error;
+    float alpha;
     float out_min;
     float out_max;
 } PIDController_t;

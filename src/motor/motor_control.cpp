@@ -35,6 +35,8 @@ void pid_init(PIDController_t *pid, float Kp, float Ki, float Kd, float out_min,
     pid->Kd = Kd;
     pid->integral = 0.0f;
     pid->prev_error = 0.0f;
+    pid->filtered_error = 0.0f;
+    pid->alpha = 0.92f; // smoothing factor for first-order IIR filter on the error signal, calc in template_comms.cpp
     pid->out_min = out_min;
     pid->out_max = out_max;
 }
@@ -50,6 +52,7 @@ void pid_reset(PIDController_t *pid) {
     if (!pid) return;
     pid->integral = 0.0f;
     pid->prev_error = 0.0f;
+    pid->filtered_error = 0.0f;
 }
 
 /*
@@ -65,7 +68,9 @@ returns:
 float pid_compute(PIDController_t *pid, float setpoint, float measurement, float dt) {
     if (!pid || dt <= 0.0f) return 0.0f;
 
-    float error = setpoint - measurement;
+    float raw_error = setpoint - measurement;
+    pid->filtered_error = (1.0f - pid->alpha) * raw_error + pid->alpha * pid->filtered_error;
+    float error = pid->filtered_error;
 
     // Termo Proporcional
     float P = pid->Kp * error;
@@ -407,16 +412,23 @@ void potentiometer_movement(VelocityGenerator_t *vel_gen, PIDController_t *pid, 
     float now_sec = (float)xTaskGetTickCount() * (1.0f / configTICK_RATE_HZ);
     TrajectoryPoint_t traj = velocity_generator_update(vel_gen, now_sec);
     float pos_error = traj.href - h_medido;
+    float deadband_mm = 0.2f;
+    uint16_t desired_pot = pistonPosToPot(traj.href);
+    uint16_t target_pot = pistonPosToPot(vel_gen->h_target);
+    float v_control = pid_compute(pid, traj.href, h_medido, dt);
 
-    if (traj.is_completed && fabsf(pos_error) < 0.2f) {
+    printf("[Motor] h_start=%.3f mm, h_target=%.3f mm, traj_href=%.3f mm, desired_pot=%u, target_pot=%u, current_h=%.3f mm, error=%.3f mm, desired_v=%.3f mm/s, current_v=%.3f mm/s, gen_active=%u, gen_deadband=%u\n",
+           vel_gen->h_start, vel_gen->h_target, traj.href, desired_pot, target_pot, h_medido, pos_error,
+           traj.vref, v_control,
+           (unsigned)vel_gen->active, (unsigned)vel_gen->is_deadband);
+
+    if (traj.is_completed && fabsf(pos_error) <= deadband_mm) {
         stop_stepper_pio();
         if (mctl_state) *mctl_state = MCTL_IDLE;
         diag.motor_move_complete++;
-        printf("[Motor] Target reached! h_medido=%.2f mm, error=%.2f mm\n", h_medido, pos_error);
+        printf("[Motor] Target reached within deadband +-%.2f mm; desired_pot=%u, target_pot=%u\n",
+               deadband_mm, desired_pot, target_pot);
     } else {
-        float v_control = pid_compute(pid, traj.href, h_medido, dt);
-        //printf("[Motor DBG] pid: traj_href=%.3f h_medido=%.3f error=%.3f v_control=%.6f\n",
-        //       traj.href, h_medido, pos_error, v_control);
         set_stepper_speed_mm_s(v_control);
     }
 }
