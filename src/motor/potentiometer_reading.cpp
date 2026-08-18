@@ -5,15 +5,6 @@
 
 #define POT_MEDIAN_COUNT 11
 
-/*
-Desc: Clamp a float value between a minimum and maximum.
-params:
-    - [float] v: Value to clamp.
-    - [float] min: Minimum allowed value.
-    - [float] max: Maximum allowed value.
-returns:
-    - [float]: Clamped value within [min, max].
-*/
 static inline float clampf(float v, float min, float max) {
     return (v < min) ? min : ((v > max) ? max : v);
 }

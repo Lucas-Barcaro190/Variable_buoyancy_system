@@ -168,6 +168,7 @@ void handle_binary_command(uint8_t msgType, const uint8_t* data, uint8_t size) {
             cmd.target_pot = MINIMAL_THRESHOLD;
             cmd.speed = RECOMMENDED_SPEED_VAL;
             xQueueSend(xMotorCmdQueue, &cmd, portMAX_DELAY);
+            printf("[Queue] Enqueued FULL_CONTRACT move_pot target=%u, queue=%u\n", cmd.target_pot, (unsigned)uxQueueMessagesWaiting(xMotorCmdQueue));
             send_binary_ack(CMD_FULL_CONTRACT, true);
             break;
         }
@@ -177,6 +178,7 @@ void handle_binary_command(uint8_t msgType, const uint8_t* data, uint8_t size) {
             cmd.target_pot = MAXIMUM_THRESHOLD;
             cmd.speed = RECOMMENDED_SPEED_VAL;
             xQueueSend(xMotorCmdQueue, &cmd, portMAX_DELAY);
+            printf("[Queue] Enqueued FULL_EXPAND move_pot target=%u, queue=%u\n", cmd.target_pot, (unsigned)uxQueueMessagesWaiting(xMotorCmdQueue));
             send_binary_ack(CMD_FULL_EXPAND, true);
             break;
         }
@@ -199,6 +201,7 @@ void handle_binary_command(uint8_t msgType, const uint8_t* data, uint8_t size) {
                 cmd.target_pot = target_pot;
                 cmd.speed = RECOMMENDED_SPEED_VAL;
                 xQueueSend(xMotorCmdQueue, &cmd, portMAX_DELAY);
+                printf("[Queue] Enqueued ABS_VOLUME move_pot target=%u, queue=%u\n", cmd.target_pot, (unsigned)uxQueueMessagesWaiting(xMotorCmdQueue));
                 send_binary_ack(CMD_ABS_VOLUME, true);
             } else {
                 send_binary_ack(CMD_ABS_VOLUME, false);
@@ -227,6 +230,7 @@ void handle_binary_command(uint8_t msgType, const uint8_t* data, uint8_t size) {
                 cmd.target_pot = target_pot;
                 cmd.speed = RECOMMENDED_SPEED_VAL;
                 xQueueSend(xMotorCmdQueue, &cmd, portMAX_DELAY);
+                printf("[Queue] Enqueued REL_VOLUME move_pot target=%u, queue=%u\n", cmd.target_pot, (unsigned)uxQueueMessagesWaiting(xMotorCmdQueue));
                 send_binary_ack(CMD_REL_VOLUME, true);
             } else {
                 send_binary_ack(CMD_REL_VOLUME, false);
@@ -263,6 +267,7 @@ void handle_binary_command(uint8_t msgType, const uint8_t* data, uint8_t size) {
                 cmd.target_pot = target_pot;
                 cmd.speed = RECOMMENDED_SPEED_VAL;
                 xQueueSend(xMotorCmdQueue, &cmd, portMAX_DELAY);
+                printf("[Queue] Enqueued ABS_PISTON move_pot target=%u, queue=%u\n", cmd.target_pot, (unsigned)uxQueueMessagesWaiting(xMotorCmdQueue));
                 send_binary_ack(CMD_ABS_PISTON, true);
             } else {
                 send_binary_ack(CMD_ABS_PISTON, false);
@@ -290,6 +295,7 @@ void handle_binary_command(uint8_t msgType, const uint8_t* data, uint8_t size) {
                 cmd.target_pot = target_pot;
                 cmd.speed = RECOMMENDED_SPEED_VAL;
                 xQueueSend(xMotorCmdQueue, &cmd, portMAX_DELAY);
+                printf("[Queue] Enqueued REL_PISTON move_pot target=%u, queue=%u\n", cmd.target_pot, (unsigned)uxQueueMessagesWaiting(xMotorCmdQueue));
                 send_binary_ack(CMD_REL_PISTON, true);
             } else {
                 send_binary_ack(CMD_REL_PISTON, false);

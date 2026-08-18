@@ -16,6 +16,7 @@ static uint stepper_offset = 0;
 static bool stepper_pio_enabled = false;
 static float pio_clkdiv = 125.0f; // 125 MHz / 125 = 1 MHz PIO clock
 
+
 /*
 Desc: Initialize PID controller parameters and reset internal state.
 params:
@@ -36,7 +37,6 @@ void pid_init(PIDController_t *pid, float Kp, float Ki, float Kd, float out_min,
     pid->integral = 0.0f;
     pid->prev_error = 0.0f;
     pid->filtered_error = 0.0f;
-    pid->alpha = 0.92f; // smoothing factor for first-order IIR filter on the error signal, calc in template_comms.cpp
     pid->out_min = out_min;
     pid->out_max = out_max;
 }
@@ -69,8 +69,7 @@ float pid_compute(PIDController_t *pid, float setpoint, float measurement, float
     if (!pid || dt <= 0.0f) return 0.0f;
 
     float raw_error = setpoint - measurement;
-    pid->filtered_error = (1.0f - pid->alpha) * raw_error + pid->alpha * pid->filtered_error;
-    float error = pid->filtered_error;
+    float error = raw_error;
 
     // Termo Proporcional
     float P = pid->Kp * error;
@@ -415,12 +414,8 @@ void potentiometer_movement(VelocityGenerator_t *vel_gen, PIDController_t *pid, 
     float deadband_mm = 0.2f;
     uint16_t desired_pot = pistonPosToPot(traj.href);
     uint16_t target_pot = pistonPosToPot(vel_gen->h_target);
-    float v_control = pid_compute(pid, traj.href, h_medido, dt);
-
-    printf("[Motor] h_start=%.3f mm, h_target=%.3f mm, traj_href=%.3f mm, desired_pot=%u, target_pot=%u, current_h=%.3f mm, error=%.3f mm, desired_v=%.3f mm/s, current_v=%.3f mm/s, gen_active=%u, gen_deadband=%u\n",
-           vel_gen->h_start, vel_gen->h_target, traj.href, desired_pot, target_pot, h_medido, pos_error,
-           traj.vref, v_control,
-           (unsigned)vel_gen->active, (unsigned)vel_gen->is_deadband);
+    float pid_output = pid_compute(pid, traj.href, h_medido, dt);
+    float v_control = pid_output;
 
     if (traj.is_completed && fabsf(pos_error) <= deadband_mm) {
         stop_stepper_pio();

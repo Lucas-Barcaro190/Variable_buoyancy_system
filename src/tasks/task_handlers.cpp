@@ -18,6 +18,12 @@
 #include "src/comms/protocol.h"
 #include "src/core/shared_state.h"
 
+#define POT_IIR_ALPHA 0.95f
+
+static inline float iir_filter(float alpha, float input, float prev_output) {
+    return (1.0f - alpha) * input + alpha * prev_output;
+}
+
 /*
 Desc: Print the list of available serial commands.
 params:
@@ -145,11 +151,41 @@ params:
 returns:
     - [void]
 */
+static const char *motor_cmd_type_name(uint8_t type) {
+    switch (type) {
+        case MCTL_IDLE: return "IDLE";
+        case MCTL_MOVING_ABSOLUTE: return "MOVING_ABSOLUTE";
+        case MCTL_MOVING_UNTIL_POT: return "MOVING_UNTIL_POT";
+        case MCTL_MOVING_PULSES: return "MOVING_PULSES";
+        default: return "UNKNOWN";
+    }
+}
+
+static void print_motor_cmd(const MotorCmd_t *cmd, const char *prefix) {
+    if (cmd == NULL || prefix == NULL) return;
+    if (cmd->cmd_type == MCTL_MOVING_PULSES) {
+        printf("%s type=%s, pulses=%lu, direction=%u, speed=%u, pending=%u\n",
+               prefix,
+               motor_cmd_type_name(cmd->cmd_type),
+               (unsigned long)cmd->pulses,
+               (unsigned)cmd->direction,
+               (unsigned)cmd->speed,
+               (unsigned)uxQueueMessagesWaiting(xMotorCmdQueue));
+    } else {
+        printf("%s type=%s, target_pot=%u, speed=%u, pending=%u\n",
+               prefix,
+               motor_cmd_type_name(cmd->cmd_type),
+               (unsigned)cmd->target_pot,
+               (unsigned)cmd->speed,
+               (unsigned)uxQueueMessagesWaiting(xMotorCmdQueue));
+    }
+}
+
 static void handle_cmd_stop(void) {
     MotorCmd_t cmd = {0};
     cmd.cmd_type = MCTL_IDLE;
     xQueueSend(xMotorCmdQueue, &cmd, portMAX_DELAY);
-    printf("Queued stop command\n");
+    print_motor_cmd(&cmd, "[Queue] Enqueued");
 }
 
 /*
@@ -178,7 +214,7 @@ static void handle_cmd_move(void) {
         cmd.pulses = pulses;
         cmd.direction = direction;
         xQueueSend(xMotorCmdQueue, &cmd, portMAX_DELAY);
-        printf("Queued move command: pulses=%lu, direction=%u\n", (unsigned long)pulses, (unsigned)direction);
+        print_motor_cmd(&cmd, "[Queue] Enqueued");
     }
 }
 
@@ -208,7 +244,7 @@ static void handle_cmd_move_constant(void) {
         cmd.pulses = pulses;
         cmd.direction = direction;
         xQueueSend(xMotorCmdQueue, &cmd, portMAX_DELAY);
-        printf("Queued constant-speed move command: pulses=%lu, direction=%u\n", (unsigned long)pulses, (unsigned)direction);
+        print_motor_cmd(&cmd, "[Queue] Enqueued");
     }
 }
 
@@ -232,9 +268,10 @@ static void handle_cmd_move_pot(void) {
     MotorCmd_t cmd = {0};
     cmd.cmd_type = MCTL_MOVING_UNTIL_POT;
     cmd.target_pot = (uint16_t)pot;
+    cmd.speed = RECOMMENDED_SPEED_VAL;
     xQueueSend(xMotorCmdQueue, &cmd, portMAX_DELAY);
     float h_target = potToPistonPos((uint16_t)pot);
-    printf("Queued move_pot target=%d (h_target=%.3f mm)\n", pot, h_target);
+    print_motor_cmd(&cmd, "[Queue] Enqueued");
 }
 
 typedef void (*cmd_handler_t)(void);
@@ -354,6 +391,8 @@ void vMotorControlTask(void *pvParameters) {
 
     MotorControlState_t mctl_state = MCTL_IDLE;
     MotorCmd_t current_cmd = {0};
+    static float pot_filtered_value = 0.0f;
+    static bool pot_filtered_initialized = false;
 
     VelocityGenerator_t vel_gen;
     velocity_generator_init(&vel_gen);
@@ -371,8 +410,19 @@ void vMotorControlTask(void *pvParameters) {
             continue;
         }
 
-        // Leitura atual do potenciômetro com filtro de mediana e atualização do estado do sistema
+        // Leitura atual do potenciômetro com filtro de mediana e IIR adicional
         uint16_t current_val = read_potentiometer_median();
+        if (!pot_filtered_initialized) {
+            pot_filtered_value = (float)current_val;
+            pot_filtered_initialized = true;
+        }
+        pot_filtered_value = iir_filter(POT_IIR_ALPHA, (float)current_val, pot_filtered_value);
+        if (pot_filtered_value < 0.0f) {
+            pot_filtered_value = 0.0f;
+        } else if (pot_filtered_value > 511.0f) {
+            pot_filtered_value = 511.0f;
+        }
+        current_val = (uint16_t)(pot_filtered_value + 0.5f);
         //printf("Current pot val: %u\n", current_val);
         setPotValue(current_val);
 
@@ -387,30 +437,32 @@ void vMotorControlTask(void *pvParameters) {
         pid.Kd = pid_Kd;
         taskEXIT_CRITICAL();
 
-        // Processamento de novos comandos da fila
-        if (xQueueReceive(xMotorCmdQueue, &current_cmd, 0) == pdTRUE) {
-            mctl_state = (MotorControlState_t)current_cmd.cmd_type;
-            diag.motor_cmd_queued++;
+        // Processamento de novos comandos da fila apenas quando não há movimento em curso.
+        if (mctl_state == MCTL_IDLE) {
+            if (xQueueReceive(xMotorCmdQueue, &current_cmd, 0) == pdTRUE) {
+                mctl_state = (MotorControlState_t)current_cmd.cmd_type;
+                diag.motor_cmd_queued++;
+                print_motor_cmd(&current_cmd, "[Queue] Dequeued");
 
-            float now_sec = (float)xTaskGetTickCount() * (1.0f / configTICK_RATE_HZ);
-            float requested_vmax = (current_cmd.speed > 0) ? MOTOR_RPM_TO_MM_S(current_cmd.speed) : DEFAULT_VMAX_MM_S;
+                float now_sec = (float)xTaskGetTickCount() * (1.0f / configTICK_RATE_HZ);
+                float requested_vmax = (current_cmd.speed > 0) ? MOTOR_RPM_TO_MM_S(current_cmd.speed) : DEFAULT_VMAX_MM_S;
 
-            if (mctl_state == MCTL_MOVING_UNTIL_POT || mctl_state == MCTL_MOVING_ABSOLUTE) {
-                set_target_pot_value(current_cmd.target_pot);
-                float h_target = potToPistonPos(current_cmd.target_pot);
+                if (mctl_state == MCTL_MOVING_UNTIL_POT || mctl_state == MCTL_MOVING_ABSOLUTE) {
+                    set_target_pot_value(current_cmd.target_pot);
+                    float h_target = potToPistonPos(current_cmd.target_pot);
 
-                velocity_generator_start(&vel_gen, h_medido, h_target, now_sec, requested_vmax, 3.0f);
-                pid_reset(&pid);
+                    velocity_generator_start(&vel_gen, h_medido, h_target, now_sec, requested_vmax, 3.0f);
+                    pid_reset(&pid);
 
-                printf("[Motor] New command: type=%d, target_pot=%d (%.2f mm), h_start=%.3f mm, h_target=%.3f mm, requested_vmax=%.3f mm/s\n",
-                       mctl_state, current_cmd.target_pot, h_target, h_medido, h_target, requested_vmax);
-            } else if (mctl_state == MCTL_MOVING_PULSES) {
-                printf("[Motor] New command: type=%d, target_pot=%d, pulses=%lu, direction=%u\n",
-                       mctl_state, current_cmd.target_pot, (unsigned long)current_cmd.pulses, current_cmd.direction);
-            } else {
-                stop_stepper_pio();
-                vel_gen.active = false;
-                printf("[Motor] New command: type=%d (idle)\n", mctl_state);
+                    printf("[Queue] Executing move_pot target=%u (%.2f mm)\n", current_cmd.target_pot, h_target);
+                } else if (mctl_state == MCTL_MOVING_PULSES) {
+                    printf("[Queue] Executing move pulses=%lu direction=%u\n",
+                           (unsigned long)current_cmd.pulses, current_cmd.direction);
+                } else {
+                    stop_stepper_pio();
+                    vel_gen.active = false;
+                    printf("[Queue] Executing idle command\n");
+                }
             }
         }
 
