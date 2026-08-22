@@ -1618,7 +1618,7 @@ void initializeHardware(void) {
     stdio_init_all();
     sleep_ms(2000);  // Wait for USB to settle
     
-    printf("\n=== VBS v2.0 Hardware Initialization ===\n");
+    printf("\n=== VBS v3.0 Hardware Initialization ===\n");
     
     // Initialize hardware sync spinlocks
     initialize_hardware_sync();

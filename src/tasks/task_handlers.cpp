@@ -18,7 +18,7 @@
 #include "src/comms/protocol.h"
 #include "src/core/shared_state.h"
 
-#define POT_IIR_ALPHA 0.95f
+#define POT_IIR_ALPHA 0.92f
 
 static inline float iir_filter(float alpha, float input, float prev_output) {
     return (1.0f - alpha) * input + alpha * prev_output;
@@ -125,7 +125,7 @@ static void handle_cmd_diag(void) {
     printf("\n--- DIAGNOSTICS (on-demand) ---\n");
     printf("State: %s\n", stateToString(sys_state));
     printf("Fault: %s\n", faultToString(sys_fault_code));
-    printf("Potentiometer: %d [%d - %d]\n", getPotValue(), MINIMAL_THRESHOLD, MAXIMUM_THRESHOLD);
+    printf("Potentiometer: %.2f [%d - %d]\n", getPotValue(), MINIMAL_THRESHOLD, MAXIMUM_THRESHOLD);
     printf("Time since PC heartbeat: %lu ms\n", xTaskGetTickCount() - last_pc_heartbeat_ms);
     printf("Commands queued: %lu\n", diag.motor_cmd_queued);
     printf("Moves completed: %lu\n", diag.motor_move_complete);
@@ -141,7 +141,7 @@ returns:
     - [void]
 */
 static void handle_cmd_pot(void) {
-    printf("Potentiometer (raw ADC avg): %d\n", getPotValue());
+    printf("Potentiometer (raw ADC avg): %.2f\n", getPotValue());
 }
 
 /*
@@ -352,6 +352,7 @@ static void process_binary_stream(uint8_t *rx_buf, size_t *rx_len) {
         uint8_t expected_addr = getAddress();
         if (rx_buf[1] == expected_addr) {
             uint8_t payload_size = rx_buf[2];
+            uint8_t msg_type = rx_buf[3];
             if (payload_size <= 4) {
                 size_t expected_packet_len = 4 + payload_size;
                 if (*rx_len >= expected_packet_len) {
@@ -359,7 +360,7 @@ static void process_binary_stream(uint8_t *rx_buf, size_t *rx_len) {
                     uint8_t received_crc = rx_buf[0];
 
                     if (calculated_crc == received_crc) {
-                        handle_binary_command(rx_buf[3], &rx_buf[4], payload_size);
+                        handle_binary_command(msg_type, &rx_buf[4], payload_size);
                         memmove(rx_buf, rx_buf + expected_packet_len, *rx_len - expected_packet_len);
                         *rx_len -= expected_packet_len;
                         continue;
@@ -398,7 +399,7 @@ void vMotorControlTask(void *pvParameters) {
     velocity_generator_init(&vel_gen);
 
     PIDController_t pid;
-    pid_init(&pid, 1.0f, 0.01f, 0.0f, -DEFAULT_VMAX_MM_S, DEFAULT_VMAX_MM_S);
+    pid_init(&pid, 0.01f, 0.005f, 0.0f, -DEFAULT_VMAX_MM_S, DEFAULT_VMAX_MM_S);
 
     if (vbs_should_log(1)) printf("[Motor] 20Hz Motor Control & PID Loop started on Core 0\n");
     // comentaries
@@ -410,20 +411,20 @@ void vMotorControlTask(void *pvParameters) {
             continue;
         }
 
-        // Leitura atual do potenciômetro com filtro de mediana e IIR adicional
-        uint16_t current_val = read_potentiometer_median();
+            // Leitura atual do potenciômetro com filtro de mediana e IIR adicional
+        float current_val = read_potentiometer_median();
         if (!pot_filtered_initialized) {
-            pot_filtered_value = (float)current_val;
+            pot_filtered_value = current_val;
             pot_filtered_initialized = true;
         }
-        pot_filtered_value = iir_filter(POT_IIR_ALPHA, (float)current_val, pot_filtered_value);
+        pot_filtered_value = iir_filter(POT_IIR_ALPHA, current_val, pot_filtered_value);
         if (pot_filtered_value < 0.0f) {
             pot_filtered_value = 0.0f;
         } else if (pot_filtered_value > 511.0f) {
             pot_filtered_value = 511.0f;
         }
-        current_val = (uint16_t)(pot_filtered_value + 0.5f);
-        //printf("Current pot val: %u\n", current_val);
+        current_val = pot_filtered_value;
+        //printf("Current pot val: %.2f\n", current_val);
         setPotValue(current_val);
 
         float h_medido = potToPistonPos(current_val);
@@ -583,7 +584,7 @@ void vDiagnosticsTask(void *pvParameters) {
             printf("\n========== DIAGNOSTICS ==========");
             printf("\nState: %s\n", stateToString(sys_state));
             printf("Fault: %s\n", faultToString(sys_fault_code));
-            printf("Potentiometer: %d [%d - %d]\n", getPotValue(), MINIMAL_THRESHOLD, MAXIMUM_THRESHOLD);
+            printf("Potentiometer: %.2f [%d - %d]\n", getPotValue(), MINIMAL_THRESHOLD, MAXIMUM_THRESHOLD);
             printf("Time since PC heartbeat: %lu ms\n", xTaskGetTickCount() - last_pc_heartbeat_ms);
             printf("\nMotor Control:\n");
             printf("  Commands queued: %lu\n", diag.motor_cmd_queued);

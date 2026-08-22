@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include "hardware/uart.h"
 #include "src/motor/motor_control.h"
 #include "FreeRTOS.h"
 #include "queue.h"
@@ -57,10 +58,9 @@ returns:
     - [void]
 */
 static void send_binary_ack(uint8_t command_code, bool success) {
-    uint8_t data[2];
-    data[0] = success ? 0x00 : command_code;
-    data[1] = command_code;
-    sendBinaryPacket(CMD_ACK_CMD, data, 2);
+    uint8_t data[1];
+    data[0] = success ? 0x00 : 0x01;
+    sendBinaryPacket(CMD_ACK_CMD, data, 1);
 }
 
 /*
@@ -129,10 +129,7 @@ void sendBinaryPacket(uint8_t msgType, const uint8_t* data, uint8_t size) {
     }
     packet[0] = calculateCRC8Bluetooth(&packet[1], 3 + size);
 
-    for (int i = 0; i < 4 + size; i++) {
-        putchar(packet[i]);
-    }
-    fflush(stdout);
+    uart_write_blocking(uart0, packet, 4 + size);
 }
 
 void handle_binary_command(uint8_t msgType, const uint8_t* data, uint8_t size) {
@@ -158,8 +155,28 @@ void handle_binary_command(uint8_t msgType, const uint8_t* data, uint8_t size) {
             break;
         }
         case CMD_PING_PONG: {
+            send_binary_ack(CMD_PING_PONG, true);
             uint8_t addr = getAddress();
             sendBinaryPacket(CMD_PING_PONG, &addr, 1);
+            break;
+        }
+        case CMD_MOVE_POT: {
+            if (size == 2) {
+                uint16_t target_pot = ((uint16_t)data[0] << 8) | data[1];
+                if (target_pot <= 511) {
+                    MotorCmd_t cmd = {0};
+                    cmd.cmd_type = MCTL_MOVING_UNTIL_POT;
+                    cmd.target_pot = target_pot;
+                    cmd.speed = RECOMMENDED_SPEED_VAL;
+                    xQueueSend(xMotorCmdQueue, &cmd, portMAX_DELAY);
+                    printf("[Queue] Enqueued MOVE_POT target=%u, queue=%u\n", cmd.target_pot, (unsigned)uxQueueMessagesWaiting(xMotorCmdQueue));
+                    send_binary_ack(CMD_MOVE_POT, true);
+                } else {
+                    send_binary_ack(CMD_MOVE_POT, false);
+                }
+            } else {
+                send_binary_ack(CMD_MOVE_POT, false);
+            }
             break;
         }
         case CMD_FULL_CONTRACT: {
@@ -238,6 +255,7 @@ void handle_binary_command(uint8_t msgType, const uint8_t* data, uint8_t size) {
             break;
         }
         case CMD_REQ_VOLUME: {
+            send_binary_ack(CMD_REQ_VOLUME, true);
             float vol = currentVolume;
             uint32_t val_uint;
             memcpy(&val_uint, &vol, sizeof(float));
@@ -303,6 +321,7 @@ void handle_binary_command(uint8_t msgType, const uint8_t* data, uint8_t size) {
             break;
         }
         case CMD_REQ_PISTON: {
+            send_binary_ack(CMD_REQ_PISTON, true);
             float pos = potToPistonPos(getPotValue());
             uint32_t val_uint;
             memcpy(&val_uint, &pos, sizeof(float));

@@ -13,7 +13,7 @@ add_executable(computer_simulator
 pico_set_program_name(computer_simulator "computer_simulator")
 pico_set_program_version(computer_simulator "0.1")
 
-pico_enable_stdio_uart(computer_simulator 0)
+pico_enable_stdio_uart(computer_simulator 1)
 pico_enable_stdio_usb(computer_simulator 1)
 
 target_link_libraries(computer_simulator

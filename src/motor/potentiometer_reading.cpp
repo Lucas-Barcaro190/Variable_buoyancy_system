@@ -83,9 +83,9 @@ Desc: Read the potentiometer and return the median of the last 7 readings.
 params:
     - none
 returns:
-    - [uint16_t]: Median filtered potentiometer value in the 0-511 range.
+    - [float]: Median filtered potentiometer value in the 0-511 range.
 */
-uint16_t read_potentiometer_median(void) {
+float read_potentiometer_median(void) {
     static uint16_t history[POT_MEDIAN_COUNT] = {0};
     static int index = 0;
     static int filled = 0;
@@ -97,20 +97,20 @@ uint16_t read_potentiometer_median(void) {
         filled++;
     }
 
-    return median_of_buffer(history, filled);
+    return (float)median_of_buffer(history, filled);
 }
 
 /*
 Desc: Convert a potentiometer reading into a piston position in millimeters.
 params:
-    - [uint16_t] pot: Raw potentiometer reading in the 0-511 range.
+    - [float] pot: Raw potentiometer reading in the 0-511 range.
 returns:
     - [float]: Piston position in millimeters, clamped to valid range.
 */
-float potToPistonPos(uint16_t pot) {
-    pot = clamp_u16(pot, MINIMAL_THRESHOLD, MAXIMUM_THRESHOLD);
-    float fraction = 1.0f - ((float)(pot - MINIMAL_THRESHOLD) / POT_RANGE);
-    return (fraction * PISTON_RANGE) - MAX_PISTON_POSITION;
+float potToPistonPos(float pot) {
+    pot = clampf(pot, (float)MINIMAL_THRESHOLD, (float)MAXIMUM_THRESHOLD); // min < x < max
+    float fraction = 1.0f - ((pot - (float)MINIMAL_THRESHOLD) / POT_RANGE); // frac = 1 - x | 0 < x < 1
+    return (fraction * PISTON_RANGE) - MAX_PISTON_POSITION; // return -MAX_PISTON_POSITION < x < MAX_PISTON_POSITION
 }
 
 /*
@@ -121,9 +121,9 @@ returns:
     - [uint16_t]: Estimated potentiometer reading in the 0-511 range.
 */
 uint16_t pistonPosToPot(float pos_mm) {
-    pos_mm = clampf(pos_mm, -MAX_PISTON_POSITION, MAX_PISTON_POSITION);
-    float fraction = (pos_mm + MAX_PISTON_POSITION) / PISTON_RANGE;
-    return MAXIMUM_THRESHOLD - (uint16_t)(fraction * POT_RANGE);
+    pos_mm = clampf(pos_mm, -MAX_PISTON_POSITION, MAX_PISTON_POSITION); //  min < x < max
+    float fraction = (pos_mm + MAX_PISTON_POSITION) / PISTON_RANGE; // 0 < x < 1
+    return MAXIMUM_THRESHOLD - (uint16_t)(fraction * POT_RANGE); // return MINIMAL_THRESHOLD < x < MAXIMUM_THRESHOLD
 }
 
 /*
@@ -134,7 +134,7 @@ returns:
     - [float]: Estimated volume in cubic centimeters.
 */
 float pistonPosToVolume(float pos_mm) {
-    return clampf(pos_mm * VOL_MULTIPLIER, -MAX_VOLUME, MAX_VOLUME); // tem algo errado na conta
+    return clampf((pos_mm / 10.0f) * VOL_MULTIPLIER, -MAX_VOLUME, MAX_VOLUME); // arrumei a conta
 }
 
 /*
@@ -145,7 +145,7 @@ returns:
     - [float]: Piston position in millimeters, clamped to valid range.
 */
 float volumeToPistonPos(float vol_cm3) {
-    return clampf(vol_cm3 / VOL_MULTIPLIER, -MAX_PISTON_POSITION, MAX_PISTON_POSITION); // tem algo errado na conta
+    return clampf((vol_cm3 / VOL_MULTIPLIER) * 10.0f, -MAX_PISTON_POSITION, MAX_PISTON_POSITION); // convert cm back to mm
 }
 
 /*
@@ -155,6 +155,6 @@ params:
 returns:
     - [float]: Estimated volume in cubic centimeters.
 */
-float potToVolume(uint16_t pot) {
+float potToVolume(float pot) {
     return pistonPosToVolume(potToPistonPos(pot)); // tem algo errado na conta
 }

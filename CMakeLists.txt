@@ -48,10 +48,11 @@ add_executable(vbs_cpp_portugal
 )
 
 pico_set_program_name(vbs_cpp_portugal "vbs_cpp_portugal")
-pico_set_program_version(vbs_cpp_portugal "0.2")
+pico_set_program_version(vbs_cpp_portugal "3.2")
 
 # Modify the below lines to enable/disable output over UART/USB
 # USB CDC is enabled so the Raspberry Pi Pico serial monitor can connect after flashing.
+# Use USB for debug stdio and reserve UART0 exclusively for the binary protocol.
 pico_enable_stdio_uart(vbs_cpp_portugal 0)
 pico_enable_stdio_usb(vbs_cpp_portugal 1)
 
@@ -85,6 +86,11 @@ target_include_directories(vbs_cpp_portugal PRIVATE
 )
 
 pico_add_extra_outputs(vbs_cpp_portugal)
+
+option(BUILD_COMPUTER_SIMULATOR "Build the computer simulator firmware" ON)
+if (BUILD_COMPUTER_SIMULATOR)
+    add_subdirectory(computer_simulator)
+endif()
 
 # Test executable for UART & USB CDC verification
 #add_executable(helloworld src/helloworld.cpp)

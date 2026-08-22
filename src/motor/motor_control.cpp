@@ -71,6 +71,11 @@ float pid_compute(PIDController_t *pid, float setpoint, float measurement, float
     float raw_error = setpoint - measurement;
     float error = raw_error;
 
+    if (fabsf(error) < 0.02f) { //deadband de 0.2mm
+        error = 0.0f;
+    } else{
+        error = (error > 0.0f) ? (error - 0.02f) : (error + 0.02f);
+    }
     // Termo Proporcional
     float P = pid->Kp * error;
 
@@ -416,7 +421,10 @@ void potentiometer_movement(VelocityGenerator_t *vel_gen, PIDController_t *pid, 
     uint16_t target_pot = pistonPosToPot(vel_gen->h_target);
     float pid_output = pid_compute(pid, traj.href, h_medido, dt);
     float v_control = pid_output;
-
+    
+    printf("[Motor] Movement tick: h_medido=%.2f, h_target=%.2f, pos_error=%.2f, v_ref=%.4f mm/s, current_v=%.4f, desired_pot=%u, target_pot=%u, current_pot=%.4f\n",
+           h_medido, traj.href, pos_error, traj.vref, v_control, desired_pot, target_pot, getPotValue());
+    
     if (traj.is_completed && fabsf(pos_error) <= deadband_mm) {
         stop_stepper_pio();
         if (mctl_state) *mctl_state = MCTL_IDLE;

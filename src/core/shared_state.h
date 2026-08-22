@@ -60,7 +60,7 @@ typedef struct {
 extern volatile SystemState_t sys_state;
 extern volatile FaultCode_t sys_fault_code;
 extern volatile uint32_t last_pc_heartbeat_ms;
-extern volatile uint16_t potentiometer_value;
+extern volatile float potentiometer_value;
 extern volatile int16_t currentPistonPosition;
 extern volatile float currentVolume;
 extern volatile Diagnostics_t diag;
@@ -96,8 +96,8 @@ extern StackType_t xDiagnosticsStack[];
 extern StaticQueue_t xMotorCmdQueueHandle;
 extern uint8_t ucMotorCmdQueueStorage[];
 
-uint16_t getPotValue(void);
-uint16_t setPotValue(uint16_t val);
+float getPotValue(void);
+float setPotValue(float val);
 uint16_t get_target_pot_value(void);
 void set_target_pot_value(uint16_t val);
 void changeAddress(uint8_t newAddress);

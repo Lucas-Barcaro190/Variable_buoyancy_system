@@ -13,7 +13,7 @@ void velocity_generator_init(VelocityGenerator_t *gen) {
     gen->h_start = 0.0f;
     gen->h_target = 0.0f;
     gen->t_start_sec = 0.0f;
-    gen->vmax = DEFAULT_VMAX_MM_S;
+    gen->vmax = DEFAULT_VMAX_MM_S - 0.01f; // Slightly below max to avoid overshoot
     gen->accel_time = DEFAULT_ACCEL_TIME_S;
     gen->a_max = gen->vmax / gen->accel_time;
     gen->total_distance = 0.0f;

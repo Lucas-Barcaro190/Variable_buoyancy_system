@@ -7,7 +7,7 @@
 volatile SystemState_t sys_state = SYS_INIT;
 volatile FaultCode_t sys_fault_code = FAULT_NONE;
 volatile uint32_t last_pc_heartbeat_ms = 0;
-volatile uint16_t potentiometer_value = 0;
+volatile float potentiometer_value = 0.0f;
 volatile int16_t currentPistonPosition = 0;
 volatile float currentVolume = 0.0f;
 volatile Diagnostics_t diag = {0};
@@ -88,8 +88,8 @@ params:
 returns:
     - [uint16_t]: Current shared potentiometer reading.
 */
-uint16_t getPotValue(void) {
-    uint16_t value;
+float getPotValue(void) {
+    float value;
     taskENTER_CRITICAL();
     value = potentiometer_value;
     taskEXIT_CRITICAL();
@@ -99,11 +99,11 @@ uint16_t getPotValue(void) {
 /*
 Desc: Update the shared potentiometer value in global state.
 params:
-    - [uint16_t] val: New potentiometer value.
+    - [float] val: New potentiometer value.
 returns:
-    - [uint16_t]: The value written to shared state.
+    - [float]: The value written to shared state.
 */
-uint16_t setPotValue(uint16_t val) {
+float setPotValue(float val) {
     taskENTER_CRITICAL();
     potentiometer_value = val;
     taskEXIT_CRITICAL();

@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include "pico/stdlib.h"
 #include "hardware/gpio.h"
+#include "hardware/uart.h"
 #include "hardware/watchdog.h"
 #include "hardware/sync.h"
 #include "pico/mutex.h"
@@ -57,7 +58,13 @@ void initializeHardware(void) {
     for (mutex_t *m = start; m < end; m++) {
         mutex_init(m);
     }
+    // Initialize USB stdio for debug, and initialize UART0 directly for the binary protocol.
     stdio_init_all();
+    uart_init(uart0, 38400);
+    gpio_set_function(UART_TX_PIN, GPIO_FUNC_UART);
+    gpio_set_function(UART_RX_PIN, GPIO_FUNC_UART);
+    uart_set_hw_flow(uart0, false, false);
+    uart_set_format(uart0, 8, 1, UART_PARITY_NONE);
     setbuf(stdout, NULL);
     sleep_ms(2000);
 

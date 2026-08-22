@@ -11,6 +11,7 @@ typedef enum {
     CMD_TIMEOUT_EMERGENCY = 0x14,
     CMD_CHANGE_ID = 0x1A,
     CMD_PING_PONG = 0x1F,
+    CMD_MOVE_POT = 0x25,
     CMD_FULL_CONTRACT = 0x20,
     CMD_FULL_EXPAND = 0x2F,
     CMD_ABS_VOLUME = 0x21,
@@ -28,6 +29,7 @@ typedef enum {
     MSG_TIMEOUT_EMERGENCY = 0x0414,
     MSG_CHANGE_ID = 0x011A,
     MSG_PING_PONG = 0x011F,
+    MSG_MOVE_POT = 0x0225,
     MSG_FULL_CONTRACT = 0x0120,
     MSG_FULL_EXPAND = 0x012F,
     MSG_ABS_VOLUME = 0x0421,
@@ -67,6 +69,10 @@ typedef struct __attribute__((packed)) {
 typedef struct __attribute__((packed)) {
     uint8_t id;
 } MsgDataPingPong_t;
+
+typedef struct __attribute__((packed)) {
+    uint16_t target_pot;
+} MsgDataMovePot_t;
 
 typedef struct __attribute__((packed)) {
     uint8_t value;
