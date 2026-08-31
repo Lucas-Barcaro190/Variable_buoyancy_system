@@ -124,7 +124,7 @@ src/
 ```
 
 #### Motor Control & PIO Frequency Calculation
-The stepper motor velocity $v_{\text{mm/s}}$ is converted into step frequency $f_{\text{step}} = v_{\text{mm/s}} \times \text{STEPS\_PER\_MM}$. The PIO state machine counts clock cycles for high/low states:
+The stepper motor velocity $v_{\text{mm/s}}$ is converted into step frequency $f_{\text{step}} = v_{\text{mm/s}} \times \text{STEPS}\_\text{PER}\_\text{MM}$. The PIO state machine counts clock cycles for high/low states:
 
 $$X = \frac{f_{\text{pio}}}{2 \cdot f_{\text{step}}}$$
 
@@ -132,8 +132,8 @@ Where $f_{\text{pio}} = 1.0\,\text{MHz}$ (configured via clock divider $125.0$).
 
 #### Velocity Profile Generator (`velocity_generator.cpp`)
 Calculates smooth target trajectories $h_{\text{ref}}(t)$ and velocity references $v_{\text{ref}}(t)$:
-* **Trapezoidal Profile:** Selected when target displacement $\Delta h \ge d_{\text{accel\_decel}}$. Has acceleration phase ($t_1$), constant speed phase ($t_2$), and deceleration phase ($t_3$).
-* **Triangular Profile:** Automatically selected for short moves ($\Delta h < d_{\text{accel\_decel}}$) where the motor cannot reach full maximum velocity $v_{\text{max}}$.
+* **Trapezoidal Profile:** Selected when target displacement $\Delta h \ge d_{\text{accel}\_\text{decel}}$. Has acceleration phase ($t_1$), constant speed phase ($t_2$), and deceleration phase ($t_3$).
+* **Triangular Profile:** Automatically selected for short moves ($\Delta h < d_{\text{accel}\_\text{decel}}$) where the motor cannot reach full maximum velocity $v_{\text{max}}$.
 * **Deadband Check:** Disables trajectory generation for movements $< 0.15\,\text{mm}$ to prevent actuator chatter.
 
 ---
