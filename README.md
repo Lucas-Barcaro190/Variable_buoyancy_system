@@ -86,7 +86,7 @@ graph TD
 
 ## 3. C++ Firmware (RP2040 / Raspberry Pi Pico)
 
-The firmware is located under [`src/`](file:///c:/Users/lucas/Variable_buoyancy_system/src) and engineered for maximum determinism, safety, and modularity.
+The firmware is located under [`src/`] and engineered for maximum determinism, safety, and modularity.
 
 ### 3.1 FreeRTOS Task Architecture & Multicore Affinity
 
